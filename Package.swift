@@ -2,7 +2,13 @@
 import PackageDescription
 
 let swiftSettings: [SwiftSetting] = [
+    // Upcoming features: all become the default in Swift 7.
     .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
+    .enableUpcomingFeature("ExistentialAny"),
+    .enableUpcomingFeature("InternalImportsByDefault"),
+    .enableUpcomingFeature("MemberImportVisibility"),
+    .enableUpcomingFeature("InferIsolatedConformances"),
+    .enableUpcomingFeature("ImmutableWeakCaptures"),
 ]
 
 let package = Package(
@@ -18,7 +24,7 @@ let package = Package(
         .target(
             name: "WhatFeatureCore",
             dependencies: [.product(name: "Crypto", package: "swift-crypto")],
-            swiftSettings: swiftSettings
+            swiftSettings: swiftSettings + [.strictMemorySafety()]
         ),
         .testTarget(
             name: "WhatFeatureCoreTests",

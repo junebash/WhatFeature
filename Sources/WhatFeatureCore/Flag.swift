@@ -1,4 +1,4 @@
-import Foundation
+public import Foundation
 
 public enum FlagType: String, Sendable, Hashable, Codable, CaseIterable {
     case boolean
