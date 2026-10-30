@@ -31,8 +31,8 @@ import WhatFeatureCore
     @Test func acceptsAValidConfig() throws {
         let config = FlagConfig(
             enabled: true,
-            rules: [Rule(conditions: [Condition("country", .equality(.init("US")))], result: .variant("on"))],
-            defaultResult: .rollout([.init(variant: "on", weight: 2_500), .init(variant: "off", weight: 7_500)])
+            rules: [Rule(conditions: [Condition("country", .equals("US"))], result: .variant("on"))],
+            defaultResult: .rollout(["on": 2_500, "off": 7_500])
         )
         try config.validate(for: .boolean())
     }
@@ -41,14 +41,14 @@ import WhatFeatureCore
         let config = FlagConfig(
             enabled: true,
             rules: [Rule(conditions: [], result: .variant("maybe"))],
-            defaultResult: .rollout([.init(variant: "nope", weight: 10_000)])
+            defaultResult: .rollout(["nope": 10_000])
         )
         let error = try #require(throws: ValidationError.self) { try config.validate(for: .boolean()) }
         #expect(error.issues == ["Rule 0: unknown variant 'maybe'", "Default: unknown variant 'nope'"])
     }
 
     @Test func rejectsWeightsThatDontAddUp() throws {
-        let config = FlagConfig(enabled: true, defaultResult: .rollout([.init(variant: "on", weight: 1_000)]))
+        let config = FlagConfig(enabled: true, defaultResult: .rollout(["on": 1_000]))
         let error = try #require(throws: ValidationError.self) { try config.validate(for: .boolean()) }
         #expect(error.issues == ["Default: weights add up to 1000, not 10000"])
     }
@@ -56,7 +56,7 @@ import WhatFeatureCore
     @Test func rejectsNegativeWeightsAndEmptyRollouts() throws {
         let negative = FlagConfig(
             enabled: true,
-            defaultResult: .rollout([.init(variant: "on", weight: -1), .init(variant: "off", weight: 10_001)])
+            defaultResult: .rollout(["on": -1, "off": 10_001])
         )
         #expect(throws: ValidationError.self) { try negative.validate(for: .boolean()) }
 
@@ -67,7 +67,7 @@ import WhatFeatureCore
     @Test func rejectsNullComparisonsAndEmptyAttributes() throws {
         let config = FlagConfig(
             enabled: true,
-            rules: [Rule(conditions: [Condition("country", .equality(.init(nil))), Condition("", .presence(.init(isPresent: true)))], result: .variant("on"))],
+            rules: [Rule(conditions: [Condition("country", .equals(nil)), Condition("", .exists)], result: .variant("on"))],
             defaultResult: .variant("off")
         )
         let error = try #require(throws: ValidationError.self) { try config.validate(for: .boolean()) }

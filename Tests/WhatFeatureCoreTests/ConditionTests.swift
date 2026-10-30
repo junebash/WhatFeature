@@ -15,18 +15,18 @@ import WhatFeatureCore
     )
 
     @Test(arguments: [
-        (Condition("country", .equality(.init("US"))), true),
-        (Condition("country", .equality(.init("DE"))), false),
-        (Condition("country", .equality(.init("DE", isEqual: false))), true),
-        (Condition("country", .membership(.init(["US", "CA"]))), true),
-        (Condition("country", .membership(.init(["US", "CA"], isMember: false))), false),
-        (Condition("beta", .equality(.init(true))), true),
-        (Condition("targetingKey", .membership(.init(["user-1", "user-2"]))), true),
+        (Condition("country", .equals("US")), true),
+        (Condition("country", .equals("DE")), false),
+        (Condition("country", .notEquals("DE")), true),
+        (Condition("country", .in(["US", "CA"])), true),
+        (Condition("country", .notIn(["US", "CA"])), false),
+        (Condition("beta", .equals(true)), true),
+        (Condition("targetingKey", .in(["user-1", "user-2"])), true),
 
-        (Condition("email", .string(.init(.startsWith, "june@"))), true),
-        (Condition("email", .string(.init(.endsWith, "@example.com"))), true),
-        (Condition("email", .string(.init(.contains, "example"))), true),
-        (Condition("email", .string(.init(.endsWith, "@other.com"))), false),
+        (Condition("email", .startsWith("june@")), true),
+        (Condition("email", .endsWith("@example.com")), true),
+        (Condition("email", .contains("example")), true),
+        (Condition("email", .endsWith("@other.com")), false),
 
         (Condition("age", .number(.eq, 30)), true),
         (Condition("age", .number(.lt, 30)), false),
@@ -40,32 +40,32 @@ import WhatFeatureCore
         (Condition("appVersion", .version(.gt, SemanticVersion(major: 2))), true),
         (Condition("appVersion", .version(.gte, SemanticVersion(major: 2, minor: 2))), false),
 
-        (Condition("country", .presence(.init(isPresent: true))), true),
-        (Condition("country", .presence(.init(isPresent: false))), false),
+        (Condition("country", .exists), true),
+        (Condition("country", .notExists), false),
     ])
     func matches(_ condition: Condition, _ expected: Bool) {
         #expect(condition.matches(context) == expected)
     }
 
     @Test(arguments: [
-        Condition.Predicate.equality(.init("US")), .equality(.init("US", isEqual: false)), .membership(.init(["US"])), .membership(.init(["US"], isMember: false)),
-        .string(.init(.startsWith, "U")), .string(.init(.endsWith, "S")), .string(.init(.contains, "U")),
+        Condition.Predicate.equals("US"), .notEquals("US"), .in(["US"]), .notIn(["US"]),
+        .startsWith("U"), .endsWith("S"), .contains("U"),
         .number(.lt, 1), .number(.lte, 1), .number(.gt, 1), .number(.gte, 1),
         .version(.eq, SemanticVersion(major: 1)), .version(.lt, SemanticVersion(major: 1)),
         .version(.lte, SemanticVersion(major: 1)), .version(.gt, SemanticVersion(major: 1)),
         .version(.gte, SemanticVersion(major: 1)),
-        .presence(.init(isPresent: true)),
+        .exists,
     ])
     func missingAttributeNeverMatches(_ predicate: Condition.Predicate) {
         #expect(!Condition("missing", predicate).matches(context))
     }
 
     @Test func missingAttributeMatchesNotExists() {
-        #expect(Condition("missing", .presence(.init(isPresent: false))).matches(context))
+        #expect(Condition("missing", .notExists).matches(context))
     }
 
     @Test(arguments: [
-        Condition("age", .string(.init(.startsWith, "3"))),
+        Condition("age", .startsWith("3")),
         Condition("country", .number(.lt, 5)),
         Condition("age", .version(.gt, SemanticVersion(major: 1))),
         Condition("email", .version(.gt, SemanticVersion(major: 1))),
@@ -79,7 +79,7 @@ import WhatFeatureCore
         #expect(condition == Condition("appVersion", .version(.gte, SemanticVersion(major: 2, minor: 1))))
 
         let exists = try decode(Condition.self, from: #"{"attribute": "beta", "operator": "exists"}"#)
-        #expect(exists == Condition("beta", .presence(.init(isPresent: true))))
+        #expect(exists == Condition("beta", .exists))
     }
 
     @Test(arguments: [
@@ -98,10 +98,10 @@ import WhatFeatureCore
     }
 
     @Test(arguments: [
-        Condition("a", .equality(.init(["nested": [1, 2]]))), Condition("a", .membership(.init(["x", 3], isMember: false))),
-        Condition("a", .string(.init(.contains, "x"))), Condition("a", .number(.gte, 1.5)),
+        Condition("a", .equals(["nested": [1, 2]])), Condition("a", .notIn(["x", 3])),
+        Condition("a", .contains("x")), Condition("a", .number(.gte, 1.5)),
         Condition("a", .version(.lt, SemanticVersion(major: 1, prerelease: ["rc", "1"]))),
-        Condition("a", .presence(.init(isPresent: false))),
+        Condition("a", .notExists),
     ])
     func roundTrips(_ condition: Condition) throws {
         #expect(try roundTrip(condition) == condition)
@@ -126,5 +126,18 @@ import WhatFeatureCore
         }
         #expect(object["operator"] == .string(op.rawValue))
         #expect(try roundTrip(condition) == condition)
+    }
+
+    @Test func shorthandsExpandToTheGroupedTypes() {
+        typealias Predicate = Condition.Predicate
+        #expect(Predicate.equals("US") == .equality(.init("US", isEqual: true)))
+        #expect(Predicate.notEquals("US") == .equality(.init("US", isEqual: false)))
+        #expect(Predicate.in(["US"]) == .membership(.init(["US"], isMember: true)))
+        #expect(Predicate.notIn(["US"]) == .membership(.init(["US"], isMember: false)))
+        #expect(Predicate.startsWith("a") == .string(.init(.startsWith, "a")))
+        #expect(Predicate.endsWith("a") == .string(.init(.endsWith, "a")))
+        #expect(Predicate.contains("a") == .string(.init(.contains, "a")))
+        #expect(Predicate.exists == .presence(.init(isPresent: true)))
+        #expect(Predicate.notExists == .presence(.init(isPresent: false)))
     }
 }

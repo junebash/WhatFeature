@@ -37,6 +37,14 @@ public enum RuleResult: Sendable, Hashable {
     case rollout([WeightedVariant])
 }
 
+extension RuleResult {
+    /// Shorthand for `.rollout([WeightedVariant])`: `.rollout(["on": 1_000, "off": 9_000])`.
+    /// Order matters (it decides which buckets each variant gets), so this takes `KeyValuePairs`, not a dictionary.
+    public static func rollout(_ weights: KeyValuePairs<String, Int>) -> Self {
+        .rollout(weights.map { WeightedVariant(variant: $0.key, weight: $0.value) })
+    }
+}
+
 public struct WeightedVariant: Sendable, Hashable, Codable {
     public var variant: String
     public var weight: Int

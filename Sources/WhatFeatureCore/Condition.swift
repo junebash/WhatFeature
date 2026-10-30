@@ -111,12 +111,28 @@ extension Condition {
     }
 }
 
+/// Shorthands named after the JSON operators, e.g. `.notIn(["US", "CA"])` or `.exists`.
+extension Condition.Predicate {
+    public static func equals(_ value: JSONValue) -> Self { .equality(.init(value)) }
+    public static func notEquals(_ value: JSONValue) -> Self { .equality(.init(value, isEqual: false)) }
+
+    public static func `in`(_ values: [JSONValue]) -> Self { .membership(.init(values)) }
+    public static func notIn(_ values: [JSONValue]) -> Self { .membership(.init(values, isMember: false)) }
+
+    public static func startsWith(_ string: String) -> Self { .string(.init(.startsWith, string)) }
+    public static func endsWith(_ string: String) -> Self { .string(.init(.endsWith, string)) }
+    public static func contains(_ string: String) -> Self { .string(.init(.contains, string)) }
+
+    public static let exists: Self = .presence(.init(isPresent: true))
+    public static let notExists: Self = .presence(.init(isPresent: false))
+}
+
 extension Condition {
     /// If the attribute is missing (or `null`), the condition is false for every operator except `notExists`.
     /// A value of the wrong type (e.g. `lt` on a string) is also false, not an error.
     public func matches(_ context: EvaluationContext) -> Bool {
         guard let value = context.value(for: attribute) else {
-            return predicate == .presence(Presence(isPresent: false))
+            return predicate == .notExists
         }
 
         switch predicate {
@@ -194,19 +210,18 @@ extension Condition.Predicate {
             guard let version = SemanticVersion(string) else { throw InvalidOperand(message: "'\(string)' is not a valid version") }
             return version
         }
-        func presence(_ isPresent: Bool) throws(InvalidOperand) -> Self {
+        func noValue() throws(InvalidOperand) {
             if operand != nil { throw InvalidOperand(message: "'\(op.rawValue)' doesn't take a value") }
-            return .presence(.init(isPresent: isPresent))
         }
 
         switch op {
-        case .equals: self = .equality(.init(try required()))
-        case .notEquals: self = .equality(.init(try required(), isEqual: false))
-        case .in: self = .membership(.init(try list()))
-        case .notIn: self = .membership(.init(try list(), isMember: false))
-        case .startsWith: self = .string(.init(.startsWith, try string()))
-        case .endsWith: self = .string(.init(.endsWith, try string()))
-        case .contains: self = .string(.init(.contains, try string()))
+        case .equals: self = .equals(try required())
+        case .notEquals: self = .notEquals(try required())
+        case .in: self = .in(try list())
+        case .notIn: self = .notIn(try list())
+        case .startsWith: self = .startsWith(try string())
+        case .endsWith: self = .endsWith(try string())
+        case .contains: self = .contains(try string())
         case .eq: self = .number(.eq, try number())
         case .lt: self = .number(.lt, try number())
         case .lte: self = .number(.lte, try number())
@@ -217,8 +232,12 @@ extension Condition.Predicate {
         case .semverLte: self = .version(.lte, try version())
         case .semverGt: self = .version(.gt, try version())
         case .semverGte: self = .version(.gte, try version())
-        case .exists: self = try presence(true)
-        case .notExists: self = try presence(false)
+        case .exists:
+            try noValue()
+            self = .exists
+        case .notExists:
+            try noValue()
+            self = .notExists
         }
     }
 

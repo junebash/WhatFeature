@@ -40,8 +40,8 @@ import WhatFeatureCore
         let config = FlagConfig(
             enabled: true,
             rules: [
-                Rule(conditions: [Condition("country", .equality(.init("DE")))], result: .variant("off")),
-                Rule(conditions: [Condition("country", .equality(.init("US")))], result: .variant("on")),
+                Rule(conditions: [Condition("country", .equals("DE"))], result: .variant("off")),
+                Rule(conditions: [Condition("country", .equals("US"))], result: .variant("on")),
                 Rule(conditions: [], result: .variant("off")),
             ],
             defaultResult: .variant("off")
@@ -54,7 +54,7 @@ import WhatFeatureCore
         let config = FlagConfig(
             enabled: true,
             rules: [Rule(
-                conditions: [Condition("country", .equality(.init("US"))), Condition("appVersion", .version(.gte, SemanticVersion(major: 3)))],
+                conditions: [Condition("country", .equals("US")), Condition("appVersion", .version(.gte, SemanticVersion(major: 3)))],
                 result: .variant("on")
             )],
             defaultResult: .variant("off")
@@ -67,7 +67,7 @@ import WhatFeatureCore
         // user-123 is in bucket 323 for new-onboarding (see BucketingTests), so 10% includes them.
         let config = FlagConfig(
             enabled: true,
-            rules: [Rule(conditions: [], result: .rollout([.init(variant: "on", weight: 1_000), .init(variant: "off", weight: 9_000)]))],
+            rules: [Rule(conditions: [], result: .rollout(["on": 1_000, "off": 9_000]))],
             defaultResult: .variant("off")
         )
         let result = EnvironmentSnapshot.single(.boolean(), config).evaluate(flagKey: "new-onboarding", context: user)
@@ -77,7 +77,7 @@ import WhatFeatureCore
     @Test func rolloutRuleIsSkippedWithoutTargetingKey() {
         let config = FlagConfig(
             enabled: true,
-            rules: [Rule(conditions: [], result: .rollout([.init(variant: "on", weight: 10_000)]))],
+            rules: [Rule(conditions: [], result: .rollout(["on": 10_000]))],
             defaultResult: .variant("off")
         )
         let anonymous = EvaluationContext(attributes: ["country": "US"])
@@ -86,7 +86,7 @@ import WhatFeatureCore
     }
 
     @Test func rolloutDefaultWithoutTargetingKeyIsAnError() {
-        let config = FlagConfig(enabled: true, defaultResult: .rollout([.init(variant: "on", weight: 10_000)]))
+        let config = FlagConfig(enabled: true, defaultResult: .rollout(["on": 10_000]))
         let result = EnvironmentSnapshot.single(.boolean(), config).evaluate(flagKey: "new-onboarding", context: EvaluationContext())
         guard case .error(.targetingKeyMissing, _) = result.outcome else {
             Issue.record("Expected TARGETING_KEY_MISSING, got \(result.outcome)")
@@ -129,7 +129,7 @@ import WhatFeatureCore
             enabled: true,
             rules: [Rule(
                 conditions: [Condition("appVersion", .version(.gte, SemanticVersion(major: 2)))],
-                result: .rollout([.init(variant: "on", weight: 5_000), .init(variant: "off", weight: 5_000)])
+                result: .rollout(["on": 5_000, "off": 5_000])
             )],
             defaultResult: .variant("off"),
             version: 3
@@ -144,5 +144,12 @@ import WhatFeatureCore
         #expect(throws: DecodingError.self) {
             try decode(RuleResult.self, from: "{}")
         }
+    }
+
+    @Test func rolloutShorthandKeepsOrder() {
+        #expect(RuleResult.rollout(["off": 9_000, "on": 1_000]) == .rollout([
+            WeightedVariant(variant: "off", weight: 9_000),
+            WeightedVariant(variant: "on", weight: 1_000),
+        ]))
     }
 }

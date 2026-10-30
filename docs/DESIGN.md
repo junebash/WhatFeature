@@ -139,6 +139,8 @@ The JSON keeps one flat `operator` name (see the table below). Decoding goes thr
 
 These types are nested in `Condition` because Foundation has its own `Predicate` type.
 
+Shorthands named after the JSON operators keep call sites short: `.equals("US")`, `.notIn(["DE", "FR"])`, `.startsWith("june@")`, `.exists`, and `RuleResult.rollout(["on": 1_000, "off": 9_000])` (ordered `KeyValuePairs`, because order decides the bucket ranges).
+
 JSON shapes:
 
 ```json
