@@ -135,7 +135,7 @@ OR logic comes from using several rules.
 
 Rules:
 
-- If the attribute is missing from the context, the condition is false. Exceptions: `notExists` is true, and `notIn` and `notEquals` are false. "Not in the beta list" shouldn't match users we know nothing about.
+- **If the attribute is missing from the context, the condition is false, whatever the operator.** The only exception is `notExists`. The principle: when we don't know, the rule doesn't fire, and evaluation falls through to later rules or the default. One consequence: `notIn` is not the same as "not `in`". `country notIn ["DE"]` does *not* match a context with no `country`. To match those as well, add a separate rule with `country notExists`.
 - If the types don't match (e.g. `lt` on a string), the condition is false. It is not an error.
 - `Operator` is a Swift enum. Adding one means adding a case and its implementation, and the compiler shows every place that needs updating.
 - **Individual targeting** ("put this user in the beta") is just `targetingKey in [...]`. Note that this stores user or device IDs inside the flag config. That is a deliberate choice, made per flag.
