@@ -11,3 +11,7 @@ This repo uses trunk-based development.
 ## Context
 
 - Design decisions live in [`docs/DESIGN.md`](docs/DESIGN.md). Read it before changing behavior, and update it when a decision changes.
+
+## Swift settings
+
+- Swift 6 language mode. Every target in `Package.swift` uses the shared `swiftSettings` array; new targets should too.

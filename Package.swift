@@ -1,6 +1,10 @@
 // swift-tools-version: 6.2
 import PackageDescription
 
+let swiftSettings: [SwiftSetting] = [
+    .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
+]
+
 let package = Package(
     name: "WhatFeature",
     platforms: [.macOS(.v15)],
@@ -13,11 +17,14 @@ let package = Package(
     targets: [
         .target(
             name: "WhatFeatureCore",
-            dependencies: [.product(name: "Crypto", package: "swift-crypto")]
+            dependencies: [.product(name: "Crypto", package: "swift-crypto")],
+            swiftSettings: swiftSettings
         ),
         .testTarget(
             name: "WhatFeatureCoreTests",
-            dependencies: ["WhatFeatureCore"]
+            dependencies: ["WhatFeatureCore"],
+            swiftSettings: swiftSettings
         ),
-    ]
+    ],
+    swiftLanguageModes: [.v6]
 )
