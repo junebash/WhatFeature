@@ -76,7 +76,7 @@ extension FlagConfig {
                 if condition.attribute.isEmpty {
                     issues.append("\(location), condition \(conditionIndex): attribute can't be empty")
                 }
-                if condition.predicate == .equality(.equals(.null)) || condition.predicate == .equality(.notEquals(.null)) {
+                if case .equality(let equality) = condition.predicate, equality.value == .null {
                     issues.append("\(location), condition \(conditionIndex): compare with null using exists/notExists")
                 }
             }

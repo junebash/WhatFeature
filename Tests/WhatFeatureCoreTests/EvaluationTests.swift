@@ -40,8 +40,8 @@ import WhatFeatureCore
         let config = FlagConfig(
             enabled: true,
             rules: [
-                Rule(conditions: [Condition("country", .equality(.equals("DE")))], result: .variant("off")),
-                Rule(conditions: [Condition("country", .equality(.equals("US")))], result: .variant("on")),
+                Rule(conditions: [Condition("country", .equality(.init("DE")))], result: .variant("off")),
+                Rule(conditions: [Condition("country", .equality(.init("US")))], result: .variant("on")),
                 Rule(conditions: [], result: .variant("off")),
             ],
             defaultResult: .variant("off")
@@ -54,7 +54,7 @@ import WhatFeatureCore
         let config = FlagConfig(
             enabled: true,
             rules: [Rule(
-                conditions: [Condition("country", .equality(.equals("US"))), Condition("appVersion", .version(.gte, SemanticVersion(major: 3)))],
+                conditions: [Condition("country", .equality(.init("US"))), Condition("appVersion", .version(.gte, SemanticVersion(major: 3)))],
                 result: .variant("on")
             )],
             defaultResult: .variant("off")

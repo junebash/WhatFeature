@@ -126,11 +126,12 @@ OR logic comes from using several rules.
 
 ```swift
 enum Predicate {
-    case equality(Equality)                    // .equals / .notEquals / .in / .notIn, on any JSON value
-    case string(StringMatch)                   // .startsWith / .endsWith / .contains
+    case equality(Equality)                    // Equality(value, isEqual:)        → equals / notEquals
+    case membership(Membership)                // Membership([values], isMember:)  → in / notIn
+    case string(StringMatch)                   // StringMatch(.startsWith | .endsWith | .contains, string)
     case number(Comparison, Double)            // Comparison: .eq / .lt / .lte / .gt / .gte
     case version(Comparison, SemanticVersion)
-    case exists, notExists
+    case presence(Presence)                    // Presence(isPresent:)             → exists / notExists
 }
 ```
 

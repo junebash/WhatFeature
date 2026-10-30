@@ -16,40 +16,66 @@ extension Condition {
     /// The test to run on the attribute's value, grouped by the kind of value it compares.
     public enum Predicate: Sendable, Hashable {
         case equality(Equality)
+        case membership(Membership)
         case string(StringMatch)
         case number(Comparison, Double)
         case version(Comparison, SemanticVersion)
-        case exists
-        case notExists
+        case presence(Presence)
     }
 
-    /// Compares the whole JSON value.
-    public enum Equality: Sendable, Hashable {
-        case equals(JSONValue)
-        case notEquals(JSONValue)
-        case `in`([JSONValue])
-        case notIn([JSONValue])
+    /// `equals` / `notEquals`: compares the whole JSON value.
+    public struct Equality: Sendable, Hashable {
+        public var value: JSONValue
+        /// `true` for `equals`, `false` for `notEquals`.
+        public var isEqual: Bool
 
-        func matches(_ value: JSONValue) -> Bool {
-            switch self {
-            case .equals(let expected): value == expected
-            case .notEquals(let expected): value != expected
-            case .in(let list): list.contains(value)
-            case .notIn(let list): !list.contains(value)
-            }
+        public init(_ value: JSONValue, isEqual: Bool = true) {
+            self.value = value
+            self.isEqual = isEqual
+        }
+
+        func matches(_ attribute: JSONValue) -> Bool {
+            (attribute == value) == isEqual
         }
     }
 
-    public enum StringMatch: Sendable, Hashable {
-        case startsWith(String)
-        case endsWith(String)
-        case contains(String)
+    /// `in` / `notIn`: checks the value against a list.
+    public struct Membership: Sendable, Hashable {
+        public var values: [JSONValue]
+        /// `true` for `in`, `false` for `notIn`.
+        public var isMember: Bool
 
-        func matches(_ string: String) -> Bool {
-            switch self {
-            case .startsWith(let prefix): string.hasPrefix(prefix)
-            case .endsWith(let suffix): string.hasSuffix(suffix)
-            case .contains(let substring): string.contains(substring)
+        public init(_ values: [JSONValue], isMember: Bool = true) {
+            self.values = values
+            self.isMember = isMember
+        }
+
+        func matches(_ attribute: JSONValue) -> Bool {
+            values.contains(attribute) == isMember
+        }
+    }
+
+    /// `startsWith` / `endsWith` / `contains` on a string attribute.
+    public struct StringMatch: Sendable, Hashable {
+        public enum Kind: Sendable, Hashable {
+            case startsWith
+            case endsWith
+            case contains
+        }
+
+        public var kind: Kind
+        public var string: String
+
+        public init(_ kind: Kind, _ string: String) {
+            self.kind = kind
+            self.string = string
+        }
+
+        func matches(_ attribute: String) -> Bool {
+            switch kind {
+            case .startsWith: attribute.hasPrefix(string)
+            case .endsWith: attribute.hasSuffix(string)
+            case .contains: attribute.contains(string)
             }
         }
     }
@@ -73,6 +99,16 @@ extension Condition {
             }
         }
     }
+
+    /// `exists` / `notExists`.
+    public struct Presence: Sendable, Hashable {
+        /// `true` for `exists`, `false` for `notExists`.
+        public var isPresent: Bool
+
+        public init(isPresent: Bool) {
+            self.isPresent = isPresent
+        }
+    }
 }
 
 extension Condition {
@@ -80,13 +116,13 @@ extension Condition {
     /// A value of the wrong type (e.g. `lt` on a string) is also false, not an error.
     public func matches(_ context: EvaluationContext) -> Bool {
         guard let value = context.value(for: attribute) else {
-            return predicate == .notExists
+            return predicate == .presence(Presence(isPresent: false))
         }
 
         switch predicate {
-        case .exists: return true
-        case .notExists: return false
+        case .presence(let presence): return presence.isPresent
         case .equality(let equality): return equality.matches(value)
+        case .membership(let membership): return membership.matches(value)
         case .string(let match): return value.stringValue.map(match.matches) ?? false
         case .number(let comparison, let number):
             return value.numberValue.map { comparison.holds($0, number) } ?? false
@@ -158,18 +194,19 @@ extension Condition.Predicate {
             guard let version = SemanticVersion(string) else { throw InvalidOperand(message: "'\(string)' is not a valid version") }
             return version
         }
-        func none() throws(InvalidOperand) {
+        func presence(_ isPresent: Bool) throws(InvalidOperand) -> Self {
             if operand != nil { throw InvalidOperand(message: "'\(op.rawValue)' doesn't take a value") }
+            return .presence(.init(isPresent: isPresent))
         }
 
         switch op {
-        case .equals: self = .equality(.equals(try required()))
-        case .notEquals: self = .equality(.notEquals(try required()))
-        case .in: self = .equality(.in(try list()))
-        case .notIn: self = .equality(.notIn(try list()))
-        case .startsWith: self = .string(.startsWith(try string()))
-        case .endsWith: self = .string(.endsWith(try string()))
-        case .contains: self = .string(.contains(try string()))
+        case .equals: self = .equality(.init(try required()))
+        case .notEquals: self = .equality(.init(try required(), isEqual: false))
+        case .in: self = .membership(.init(try list()))
+        case .notIn: self = .membership(.init(try list(), isMember: false))
+        case .startsWith: self = .string(.init(.startsWith, try string()))
+        case .endsWith: self = .string(.init(.endsWith, try string()))
+        case .contains: self = .string(.init(.contains, try string()))
         case .eq: self = .number(.eq, try number())
         case .lt: self = .number(.lt, try number())
         case .lte: self = .number(.lte, try number())
@@ -180,24 +217,21 @@ extension Condition.Predicate {
         case .semverLte: self = .version(.lte, try version())
         case .semverGt: self = .version(.gt, try version())
         case .semverGte: self = .version(.gte, try version())
-        case .exists:
-            try none()
-            self = .exists
-        case .notExists:
-            try none()
-            self = .notExists
+        case .exists: self = try presence(true)
+        case .notExists: self = try presence(false)
         }
     }
 
     var `operator`: Condition.Operator {
         switch self {
-        case .equality(.equals): .equals
-        case .equality(.notEquals): .notEquals
-        case .equality(.in): .in
-        case .equality(.notIn): .notIn
-        case .string(.startsWith): .startsWith
-        case .string(.endsWith): .endsWith
-        case .string(.contains): .contains
+        case .equality(let equality): equality.isEqual ? .equals : .notEquals
+        case .membership(let membership): membership.isMember ? .in : .notIn
+        case .string(let match):
+            switch match.kind {
+            case .startsWith: .startsWith
+            case .endsWith: .endsWith
+            case .contains: .contains
+            }
         case .number(.eq, _): .eq
         case .number(.lt, _): .lt
         case .number(.lte, _): .lte
@@ -208,19 +242,18 @@ extension Condition.Predicate {
         case .version(.lte, _): .semverLte
         case .version(.gt, _): .semverGt
         case .version(.gte, _): .semverGte
-        case .exists: .exists
-        case .notExists: .notExists
+        case .presence(let presence): presence.isPresent ? .exists : .notExists
         }
     }
 
     var operand: JSONValue? {
         switch self {
-        case .equality(.equals(let value)), .equality(.notEquals(let value)): value
-        case .equality(.in(let list)), .equality(.notIn(let list)): .array(list)
-        case .string(.startsWith(let string)), .string(.endsWith(let string)), .string(.contains(let string)): .string(string)
+        case .equality(let equality): equality.value
+        case .membership(let membership): .array(membership.values)
+        case .string(let match): .string(match.string)
         case .number(_, let number): .number(number)
         case .version(_, let version): .string(version.description)
-        case .exists, .notExists: nil
+        case .presence: nil
         }
     }
 }
