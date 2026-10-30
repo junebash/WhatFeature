@@ -55,7 +55,7 @@ It is also a learning project: the point is to understand how a flag service wor
                          │
                 ┌────────▼──────────┐
                 │ WhatFeatureCore   │  pure Swift, no I/O:
-                │ Evaluator         │  models, rules, hashing
+                │ evaluation        │  models, rules, hashing
                 └───────────────────┘
 ```
 
@@ -65,7 +65,7 @@ Evaluation never touches the database. Each environment's flag config is held in
 
 | Target | Kind | Contents |
 |---|---|---|
-| `WhatFeatureCore` | library | Models, rule types, `Evaluator`, bucketing hash. No networking, no database. Most tests live here. |
+| `WhatFeatureCore` | library | Models, rule types, evaluation (`EnvironmentSnapshot.evaluate`), bucketing hash, validation. No networking, no database. Most tests live here. |
 | `WhatFeatureStorage` | library | `FlagStore` protocol and the SQLite implementation |
 | `WhatFeatureServer` | library | Hummingbird app, routes, middleware, OFREP generated code |
 | `whatfeature` | executable | CLI: `serve`, `token create`, `migrate` |
@@ -116,26 +116,36 @@ enum RuleResult {
 
 struct Condition {
     var attribute: String     // context key, e.g. "appVersion", "targetingKey"
-    var op: Operator
-    var value: ContextValue
+    var predicate: Predicate  // operator + operand, e.g. .semverGte(2.1.0)
 }
 ```
 
 OR logic comes from using several rules.
+
+`Predicate` is an enum whose cases carry a typed operand (`.lt(Double)`, `.semverGte(SemanticVersion)`, `.in([JSONValue])`). A condition with the wrong operand type can't be decoded, so the admin API rejects it before it is saved.
+
+JSON shapes:
+
+```json
+{"attribute": "appVersion", "operator": "semverGte", "value": "2.1.0"}
+{"variant": "on"}
+{"rollout": [{"variant": "on", "weight": 1000}, {"variant": "off", "weight": 9000}]}
+```
 
 ### Operators (v1)
 
 | Group | Operators |
 |---|---|
 | Equality | `equals`, `notEquals`, `in`, `notIn` |
-| Strings | `startsWith`, `endsWith`, `contains`, `matches` (regex) |
+| Strings | `startsWith`, `endsWith`, `contains` |
 | Numbers | `lt`, `lte`, `gt`, `gte` |
 | Semantic versions | `semverEq`, `semverLt`, `semverLte`, `semverGt`, `semverGte` |
 | Presence | `exists`, `notExists` |
 
 Rules:
 
-- **If the attribute is missing from the context, the condition is false, whatever the operator.** The only exception is `notExists`. The principle: when we don't know, the rule doesn't fire, and evaluation falls through to later rules or the default. One consequence: `notIn` is not the same as "not `in`". `country notIn ["DE"]` does *not* match a context with no `country`. To match those as well, add a separate rule with `country notExists`.
+- No regex operator yet. Swift's `Regex` isn't `Sendable`, so a compiled one can't live in a shared snapshot. `endsWith` covers the common case (email domains). We can add it later with a `Sendable` wrapper.
+- **If the attribute is missing from the context (or `null`), the condition is false, whatever the operator.** The only exception is `notExists`. The principle: when we don't know, the rule doesn't fire, and evaluation falls through to later rules or the default. One consequence: `notIn` is not the same as "not `in`". `country notIn ["DE"]` does *not* match a context with no `country`. To match those as well, add a separate rule with `country notExists`.
 - If the types don't match (e.g. `lt` on a string), the condition is false. It is not an error.
 - `Operator` is a Swift enum. Adding one means adding a case and its implementation, and the compiler shows every place that needs updating.
 - **Individual targeting** ("put this user in the beta") is just `targetingKey in [...]`. Note that this stores user or device IDs inside the flag config. That is a deliberate choice, made per flag.
@@ -151,10 +161,13 @@ evaluate(flagKey, context, environmentSnapshot):
       if every condition matches:
           variant → value, reason TARGETING_MATCH
           rollout → bucket(...), reason SPLIT
+  no rules at all              → defaultResult, reason STATIC
   no rule matched              → defaultResult, reason DEFAULT (or SPLIT if it's a rollout)
 ```
 
-If a rollout needs a `targetingKey` and the context has none, that rule is skipped. If the default result is the rollout, we fall back to the first variant in it, with error code `TARGETING_KEY_MISSING`. Apps should always send a device ID, but we don't require it.
+If a rollout needs a `targetingKey` and the context has none, that rule is skipped and evaluation moves on to the next one. If the *default* is a rollout, the result is error `TARGETING_KEY_MISSING`, and the app uses its own code default. Apps should always send a device ID, but we don't require it.
+
+Results carry the index of the matched rule (or none for the default). The dry-run endpoint uses this to show *why* someone got a value.
 
 ### Bucketing (how rollouts stay sticky)
 
