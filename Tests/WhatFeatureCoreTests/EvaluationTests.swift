@@ -40,8 +40,8 @@ import WhatFeatureCore
         let config = FlagConfig(
             enabled: true,
             rules: [
-                Rule(conditions: [Condition("country", .equals("DE"))], result: .variant("off")),
-                Rule(conditions: [Condition("country", .equals("US"))], result: .variant("on")),
+                Rule(conditions: [Condition("country", .equality(.equals("DE")))], result: .variant("off")),
+                Rule(conditions: [Condition("country", .equality(.equals("US")))], result: .variant("on")),
                 Rule(conditions: [], result: .variant("off")),
             ],
             defaultResult: .variant("off")
@@ -54,7 +54,7 @@ import WhatFeatureCore
         let config = FlagConfig(
             enabled: true,
             rules: [Rule(
-                conditions: [Condition("country", .equals("US")), Condition("appVersion", .semverGte(SemanticVersion(major: 3)))],
+                conditions: [Condition("country", .equality(.equals("US"))), Condition("appVersion", .version(.gte, SemanticVersion(major: 3)))],
                 result: .variant("on")
             )],
             defaultResult: .variant("off")
@@ -128,7 +128,7 @@ import WhatFeatureCore
         #expect(config == FlagConfig(
             enabled: true,
             rules: [Rule(
-                conditions: [Condition("appVersion", .semverGte(SemanticVersion(major: 2)))],
+                conditions: [Condition("appVersion", .version(.gte, SemanticVersion(major: 2)))],
                 result: .rollout([.init(variant: "on", weight: 5_000), .init(variant: "off", weight: 5_000)])
             )],
             defaultResult: .variant("off"),

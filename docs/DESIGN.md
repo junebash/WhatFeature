@@ -116,13 +116,27 @@ enum RuleResult {
 
 struct Condition {
     var attribute: String     // context key, e.g. "appVersion", "targetingKey"
-    var predicate: Predicate  // operator + operand, e.g. .semverGte(2.1.0)
+    var predicate: Predicate  // e.g. .version(.gte, 2.1.0)
 }
 ```
 
 OR logic comes from using several rules.
 
-`Predicate` is an enum whose cases carry a typed operand (`.lt(Double)`, `.semverGte(SemanticVersion)`, `.in([JSONValue])`). A condition with the wrong operand type can't be decoded, so the admin API rejects it before it is saved.
+`Condition.Predicate` groups operators by the kind of value they compare, and each case carries a typed operand:
+
+```swift
+enum Predicate {
+    case equality(Equality)                    // .equals / .notEquals / .in / .notIn, on any JSON value
+    case string(StringMatch)                   // .startsWith / .endsWith / .contains
+    case number(Comparison, Double)            // Comparison: .eq / .lt / .lte / .gt / .gte
+    case version(Comparison, SemanticVersion)
+    case exists, notExists
+}
+```
+
+The JSON keeps one flat `operator` name (see the table below). Decoding goes through a private struct that mirrors the JSON, then converts it into a typed `Predicate`. A condition with the wrong operand type can't be decoded, so the admin API rejects it before it is saved.
+
+These types are nested in `Condition` because Foundation has its own `Predicate` type.
 
 JSON shapes:
 
@@ -138,7 +152,7 @@ JSON shapes:
 |---|---|
 | Equality | `equals`, `notEquals`, `in`, `notIn` |
 | Strings | `startsWith`, `endsWith`, `contains` |
-| Numbers | `lt`, `lte`, `gt`, `gte` |
+| Numbers | `eq`, `lt`, `lte`, `gt`, `gte` |
 | Semantic versions | `semverEq`, `semverLt`, `semverLte`, `semverGt`, `semverGte` |
 | Presence | `exists`, `notExists` |
 

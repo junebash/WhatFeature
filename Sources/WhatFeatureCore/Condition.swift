@@ -12,30 +12,67 @@ public struct Condition: Sendable, Hashable {
     }
 }
 
-/// The operator and its operand. Case names match the operator names used in JSON.
-public enum Predicate: Sendable, Hashable {
-    case equals(JSONValue)
-    case notEquals(JSONValue)
-    case `in`([JSONValue])
-    case notIn([JSONValue])
+extension Condition {
+    /// The test to run on the attribute's value, grouped by the kind of value it compares.
+    public enum Predicate: Sendable, Hashable {
+        case equality(Equality)
+        case string(StringMatch)
+        case number(Comparison, Double)
+        case version(Comparison, SemanticVersion)
+        case exists
+        case notExists
+    }
 
-    case startsWith(String)
-    case endsWith(String)
-    case contains(String)
+    /// Compares the whole JSON value.
+    public enum Equality: Sendable, Hashable {
+        case equals(JSONValue)
+        case notEquals(JSONValue)
+        case `in`([JSONValue])
+        case notIn([JSONValue])
 
-    case lt(Double)
-    case lte(Double)
-    case gt(Double)
-    case gte(Double)
+        func matches(_ value: JSONValue) -> Bool {
+            switch self {
+            case .equals(let expected): value == expected
+            case .notEquals(let expected): value != expected
+            case .in(let list): list.contains(value)
+            case .notIn(let list): !list.contains(value)
+            }
+        }
+    }
 
-    case semverEq(SemanticVersion)
-    case semverLt(SemanticVersion)
-    case semverLte(SemanticVersion)
-    case semverGt(SemanticVersion)
-    case semverGte(SemanticVersion)
+    public enum StringMatch: Sendable, Hashable {
+        case startsWith(String)
+        case endsWith(String)
+        case contains(String)
 
-    case exists
-    case notExists
+        func matches(_ string: String) -> Bool {
+            switch self {
+            case .startsWith(let prefix): string.hasPrefix(prefix)
+            case .endsWith(let suffix): string.hasSuffix(suffix)
+            case .contains(let substring): string.contains(substring)
+            }
+        }
+    }
+
+    /// Used for both numbers and semantic versions. The attribute's value is on the left:
+    /// `.number(.lt, 18)` means "attribute < 18".
+    public enum Comparison: Sendable, Hashable {
+        case eq
+        case lt
+        case lte
+        case gt
+        case gte
+
+        func holds<T: Comparable>(_ lhs: T, _ rhs: T) -> Bool {
+            switch self {
+            case .eq: lhs == rhs
+            case .lt: lhs < rhs
+            case .lte: lhs <= rhs
+            case .gt: lhs > rhs
+            case .gte: lhs >= rhs
+            }
+        }
+    }
 }
 
 extension Condition {
@@ -49,119 +86,141 @@ extension Condition {
         switch predicate {
         case .exists: return true
         case .notExists: return false
-
-        case .equals(let expected): return value == expected
-        case .notEquals(let expected): return value != expected
-        case .in(let list): return list.contains(value)
-        case .notIn(let list): return !list.contains(value)
-
-        case .startsWith(let prefix): return value.stringValue?.hasPrefix(prefix) ?? false
-        case .endsWith(let suffix): return value.stringValue?.hasSuffix(suffix) ?? false
-        case .contains(let substring): return value.stringValue?.contains(substring) ?? false
-
-        case .lt(let number): return value.numberValue.map { $0 < number } ?? false
-        case .lte(let number): return value.numberValue.map { $0 <= number } ?? false
-        case .gt(let number): return value.numberValue.map { $0 > number } ?? false
-        case .gte(let number): return value.numberValue.map { $0 >= number } ?? false
-
-        case .semverEq(let version): return value.semanticVersion.map { $0 == version } ?? false
-        case .semverLt(let version): return value.semanticVersion.map { $0 < version } ?? false
-        case .semverLte(let version): return value.semanticVersion.map { $0 <= version } ?? false
-        case .semverGt(let version): return value.semanticVersion.map { $0 > version } ?? false
-        case .semverGte(let version): return value.semanticVersion.map { $0 >= version } ?? false
+        case .equality(let equality): return equality.matches(value)
+        case .string(let match): return value.stringValue.map(match.matches) ?? false
+        case .number(let comparison, let number):
+            return value.numberValue.map { comparison.holds($0, number) } ?? false
+        case .version(let comparison, let version):
+            return value.stringValue.flatMap(SemanticVersion.init).map { comparison.holds($0, version) } ?? false
         }
     }
 }
 
-extension JSONValue {
-    fileprivate var semanticVersion: SemanticVersion? {
-        stringValue.flatMap(SemanticVersion.init)
+// MARK: - JSON
+
+extension Condition {
+    /// Operator names as they appear in JSON.
+    public enum Operator: String, Sendable, Hashable, Codable, CaseIterable {
+        case equals, notEquals, `in`, notIn
+        case startsWith, endsWith, contains
+        case eq, lt, lte, gt, gte
+        case semverEq, semverLt, semverLte, semverGt, semverGte
+        case exists, notExists
     }
 }
 
 extension Condition: Codable {
-    private enum CodingKeys: String, CodingKey {
-        case attribute, `operator`, value
+    /// Mirrors the JSON shape. The typed `Predicate` is built from (or flattened into) this.
+    private struct Wire: Codable {
+        var attribute: String
+        var `operator`: Operator
+        var value: JSONValue?
     }
 
     public init(from decoder: any Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let attribute = try container.decode(String.self, forKey: .attribute)
-        let name = try container.decode(String.self, forKey: .operator)
-
-        func value<T: Decodable>(_: T.Type = T.self) throws -> T {
-            try container.decode(T.self, forKey: .value)
+        let wire = try Wire(from: decoder)
+        do {
+            self.init(wire.attribute, try Predicate(wire.operator, operand: wire.value))
+        } catch {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: error.message))
         }
-
-        let predicate: Predicate = switch name {
-        case "equals": .equals(try value())
-        case "notEquals": .notEquals(try value())
-        case "in": .in(try value())
-        case "notIn": .notIn(try value())
-        case "startsWith": .startsWith(try value())
-        case "endsWith": .endsWith(try value())
-        case "contains": .contains(try value())
-        case "lt": .lt(try value())
-        case "lte": .lte(try value())
-        case "gt": .gt(try value())
-        case "gte": .gte(try value())
-        case "semverEq": .semverEq(try value())
-        case "semverLt": .semverLt(try value())
-        case "semverLte": .semverLte(try value())
-        case "semverGt": .semverGt(try value())
-        case "semverGte": .semverGte(try value())
-        case "exists": .exists
-        case "notExists": .notExists
-        default:
-            throw DecodingError.dataCorruptedError(
-                forKey: .operator, in: container, debugDescription: "Unknown operator '\(name)'"
-            )
-        }
-        self.init(attribute, predicate)
     }
 
     public func encode(to encoder: any Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(attribute, forKey: .attribute)
-        try container.encode(predicate.name, forKey: .operator)
-        switch predicate {
-        case .equals(let value), .notEquals(let value): try container.encode(value, forKey: .value)
-        case .in(let list), .notIn(let list): try container.encode(list, forKey: .value)
-        case .startsWith(let string), .endsWith(let string), .contains(let string):
-            try container.encode(string, forKey: .value)
-        case .lt(let number), .lte(let number), .gt(let number), .gte(let number):
-            try container.encode(number, forKey: .value)
-        case .semverEq(let version), .semverLt(let version), .semverLte(let version),
-             .semverGt(let version), .semverGte(let version):
-            try container.encode(version, forKey: .value)
-        case .exists, .notExists:
-            break
-        }
+        try Wire(attribute: attribute, operator: predicate.operator, value: predicate.operand).encode(to: encoder)
     }
 }
 
-extension Predicate {
-    /// The operator name used in JSON.
-    public var name: String {
+struct InvalidOperand: Error {
+    var message: String
+}
+
+extension Condition.Predicate {
+    init(_ op: Condition.Operator, operand: JSONValue?) throws(InvalidOperand) {
+        func required() throws(InvalidOperand) -> JSONValue {
+            guard let operand else { throw InvalidOperand(message: "'\(op.rawValue)' needs a value") }
+            return operand
+        }
+        func list() throws(InvalidOperand) -> [JSONValue] {
+            guard case .array(let list) = try required() else { throw InvalidOperand(message: "'\(op.rawValue)' needs a list") }
+            return list
+        }
+        func string() throws(InvalidOperand) -> String {
+            guard let string = try required().stringValue else { throw InvalidOperand(message: "'\(op.rawValue)' needs a string") }
+            return string
+        }
+        func number() throws(InvalidOperand) -> Double {
+            guard let number = try required().numberValue else { throw InvalidOperand(message: "'\(op.rawValue)' needs a number") }
+            return number
+        }
+        func version() throws(InvalidOperand) -> SemanticVersion {
+            let string = try string()
+            guard let version = SemanticVersion(string) else { throw InvalidOperand(message: "'\(string)' is not a valid version") }
+            return version
+        }
+        func none() throws(InvalidOperand) {
+            if operand != nil { throw InvalidOperand(message: "'\(op.rawValue)' doesn't take a value") }
+        }
+
+        switch op {
+        case .equals: self = .equality(.equals(try required()))
+        case .notEquals: self = .equality(.notEquals(try required()))
+        case .in: self = .equality(.in(try list()))
+        case .notIn: self = .equality(.notIn(try list()))
+        case .startsWith: self = .string(.startsWith(try string()))
+        case .endsWith: self = .string(.endsWith(try string()))
+        case .contains: self = .string(.contains(try string()))
+        case .eq: self = .number(.eq, try number())
+        case .lt: self = .number(.lt, try number())
+        case .lte: self = .number(.lte, try number())
+        case .gt: self = .number(.gt, try number())
+        case .gte: self = .number(.gte, try number())
+        case .semverEq: self = .version(.eq, try version())
+        case .semverLt: self = .version(.lt, try version())
+        case .semverLte: self = .version(.lte, try version())
+        case .semverGt: self = .version(.gt, try version())
+        case .semverGte: self = .version(.gte, try version())
+        case .exists:
+            try none()
+            self = .exists
+        case .notExists:
+            try none()
+            self = .notExists
+        }
+    }
+
+    var `operator`: Condition.Operator {
         switch self {
-        case .equals: "equals"
-        case .notEquals: "notEquals"
-        case .in: "in"
-        case .notIn: "notIn"
-        case .startsWith: "startsWith"
-        case .endsWith: "endsWith"
-        case .contains: "contains"
-        case .lt: "lt"
-        case .lte: "lte"
-        case .gt: "gt"
-        case .gte: "gte"
-        case .semverEq: "semverEq"
-        case .semverLt: "semverLt"
-        case .semverLte: "semverLte"
-        case .semverGt: "semverGt"
-        case .semverGte: "semverGte"
-        case .exists: "exists"
-        case .notExists: "notExists"
+        case .equality(.equals): .equals
+        case .equality(.notEquals): .notEquals
+        case .equality(.in): .in
+        case .equality(.notIn): .notIn
+        case .string(.startsWith): .startsWith
+        case .string(.endsWith): .endsWith
+        case .string(.contains): .contains
+        case .number(.eq, _): .eq
+        case .number(.lt, _): .lt
+        case .number(.lte, _): .lte
+        case .number(.gt, _): .gt
+        case .number(.gte, _): .gte
+        case .version(.eq, _): .semverEq
+        case .version(.lt, _): .semverLt
+        case .version(.lte, _): .semverLte
+        case .version(.gt, _): .semverGt
+        case .version(.gte, _): .semverGte
+        case .exists: .exists
+        case .notExists: .notExists
+        }
+    }
+
+    var operand: JSONValue? {
+        switch self {
+        case .equality(.equals(let value)), .equality(.notEquals(let value)): value
+        case .equality(.in(let list)), .equality(.notIn(let list)): .array(list)
+        case .string(.startsWith(let string)), .string(.endsWith(let string)), .string(.contains(let string)): .string(string)
+        case .number(_, let number): .number(number)
+        case .version(_, let version): .string(version.description)
+        case .exists, .notExists: nil
         }
     }
 }
