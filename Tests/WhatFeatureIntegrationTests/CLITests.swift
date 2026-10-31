@@ -80,9 +80,18 @@ private func withCLI(_ test: @Sendable (Harness) async throws -> Void) async thr
     }
 }
 
-/// Runs off the caller's actor, because waiting for the process blocks a thread.
-@concurrent
+/// Waits for the process on a thread of its own. Waiting blocks a thread, and blocking one of Swift
+/// concurrency's shared threads can stall the whole test process: with a few CLI tests at once on a
+/// small machine, they took every shared thread, so the servers they were talking to couldn't answer.
 private func runProcess(_ executable: URL, _ arguments: [String], environment: [String: String], input: String?) async throws -> CLIResult {
+    try await withCheckedThrowingContinuation { continuation in
+        Thread {
+            continuation.resume(with: Result { try runProcessBlocking(executable, arguments, environment: environment, input: input) })
+        }.start()
+    }
+}
+
+private func runProcessBlocking(_ executable: URL, _ arguments: [String], environment: [String: String], input: String?) throws -> CLIResult {
     let process = Process()
     process.executableURL = executable
     process.arguments = arguments
