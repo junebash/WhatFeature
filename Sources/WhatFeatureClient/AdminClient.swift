@@ -25,31 +25,31 @@ public struct AdminClient: Sendable {
 
     /// The token this client uses. Fails with `401`/`403` if it isn't a working admin token.
     public func me() async throws -> Token {
-        try await send(.GET, "me")
+        try await send(.GET, AdminPaths.me)
     }
 
     // MARK: - Projects
 
     public func projects() async throws -> [Project] {
-        try await send(.GET, "projects")
+        try await send(.GET, AdminPaths.projects)
     }
 
     public func project(_ key: String) async throws -> Project {
-        try await send(.GET, "projects/\(key)")
+        try await send(.GET, AdminPaths.project(key))
     }
 
     public func createProject(key: String, name: String? = nil) async throws -> Project {
-        try await send(.POST, "projects", body: CreateProjectRequest(key: key, name: name))
+        try await send(.POST, AdminPaths.projects, body: CreateProjectRequest(key: key, name: name))
     }
 
     // MARK: - Environments
 
     public func environments(project: String) async throws -> [WhatFeatureStorage.Environment] {
-        try await send(.GET, "projects/\(project)/environments")
+        try await send(.GET, AdminPaths.environments(project))
     }
 
     public func createEnvironment(project: String, key: String, name: String? = nil) async throws -> WhatFeatureStorage.Environment {
-        try await send(.POST, "projects/\(project)/environments", body: CreateEnvironmentRequest(key: key, name: name))
+        try await send(.POST, AdminPaths.environments(project), body: CreateEnvironmentRequest(key: key, name: name))
     }
 
     // MARK: - Flags
@@ -66,62 +66,62 @@ public struct AdminClient: Sendable {
         descending: Bool = false
     ) async throws -> [Flag] {
         var query: [URLQueryItem] = [
-            URLQueryItem(name: "sort", value: sort.rawValue),
-            URLQueryItem(name: "order", value: descending ? "desc" : "asc"),
+            URLQueryItem(name: AdminPaths.Query.Flags.sort, value: sort.rawValue),
+            URLQueryItem(name: AdminPaths.Query.Flags.order, value: descending ? "desc" : "asc"),
         ]
-        if includeArchived { query.append(URLQueryItem(name: "includeArchived", value: "true")) }
-        if let createdBy { query.append(URLQueryItem(name: "createdBy", value: createdBy)) }
-        return try await send(.GET, "projects/\(project)/flags", query: query)
+        if includeArchived { query.append(URLQueryItem(name: AdminPaths.Query.Flags.includeArchived, value: "true")) }
+        if let createdBy { query.append(URLQueryItem(name: AdminPaths.Query.Flags.createdBy, value: createdBy)) }
+        return try await send(.GET, AdminPaths.flags(project), query: query)
     }
 
     public func flag(project: String, key: String) async throws -> FlagDetail {
-        try await send(.GET, "projects/\(project)/flags/\(key)")
+        try await send(.GET, AdminPaths.flag(project, key))
     }
 
     public func createFlag(project: String, _ request: CreateFlagRequest) async throws -> FlagDetail {
-        try await send(.POST, "projects/\(project)/flags", body: request)
+        try await send(.POST, AdminPaths.flags(project), body: request)
     }
 
     public func updateFlag(project: String, key: String, changes: SQLiteStore.FlagChanges) async throws -> FlagDetail {
-        try await send(.PATCH, "projects/\(project)/flags/\(key)", body: changes)
+        try await send(.PATCH, AdminPaths.flag(project, key), body: changes)
     }
 
     public func deleteFlag(project: String, key: String) async throws {
-        let _: Empty = try await send(.DELETE, "projects/\(project)/flags/\(key)")
+        let _: Empty = try await send(.DELETE, AdminPaths.flag(project, key))
     }
 
     public func setArchived(_ archived: Bool, project: String, key: String) async throws -> FlagDetail {
-        try await send(.POST, "projects/\(project)/flags/\(key)/\(archived ? "archive" : "unarchive")")
+        try await send(.POST, archived ? AdminPaths.archive(project, key) : AdminPaths.unarchive(project, key))
     }
 
     // MARK: - Configs
 
     public func config(project: String, environment: String, flag: String) async throws -> FlagConfig {
-        try await send(.GET, "projects/\(project)/environments/\(environment)/flags/\(flag)")
+        try await send(.GET, AdminPaths.config(project, environment, flag))
     }
 
     /// Returns the saved config, with its new version.
     public func setConfig(_ config: FlagConfig, project: String, environment: String, flag: String) async throws -> FlagConfig {
-        try await send(.PUT, "projects/\(project)/environments/\(environment)/flags/\(flag)", body: config)
+        try await send(.PUT, AdminPaths.config(project, environment, flag), body: config)
     }
 
     /// What `context` would get, and why. Stores nothing.
     public func evaluate(project: String, environment: String, flag: String, context: EvaluationContext) async throws -> DryRunResult {
-        try await send(.POST, "projects/\(project)/environments/\(environment)/flags/\(flag)/evaluate", body: DryRunRequest(context: context))
+        try await send(.POST, AdminPaths.evaluate(project, environment, flag), body: DryRunRequest(context: context))
     }
 
     // MARK: - Tokens
 
     public func tokens() async throws -> [Token] {
-        try await send(.GET, "tokens")
+        try await send(.GET, AdminPaths.tokens)
     }
 
     public func createToken(_ request: CreateTokenRequest) async throws -> CreatedTokenResponse {
-        try await send(.POST, "tokens", body: request)
+        try await send(.POST, AdminPaths.tokens, body: request)
     }
 
     public func revokeToken(_ id: TokenID) async throws -> Token {
-        try await send(.POST, "tokens/\(id)/revoke")
+        try await send(.POST, AdminPaths.revokeToken(id.rawValue))
     }
 
     // MARK: - Audit
@@ -135,13 +135,13 @@ public struct AdminClient: Sendable {
         limit: Int? = nil
     ) async throws -> [AuditEntryResponse] {
         var query: [URLQueryItem] = []
-        if let project { query.append(URLQueryItem(name: "project", value: project)) }
-        if let flag { query.append(URLQueryItem(name: "flag", value: flag)) }
-        if let actor { query.append(URLQueryItem(name: "actor", value: actor)) }
-        if let since { query.append(URLQueryItem(name: "since", value: since.formatted(.iso8601))) }
-        if let until { query.append(URLQueryItem(name: "until", value: until.formatted(.iso8601))) }
-        if let limit { query.append(URLQueryItem(name: "limit", value: String(limit))) }
-        return try await send(.GET, "audit", query: query)
+        if let project { query.append(URLQueryItem(name: AdminPaths.Query.Audit.project, value: project)) }
+        if let flag { query.append(URLQueryItem(name: AdminPaths.Query.Audit.flag, value: flag)) }
+        if let actor { query.append(URLQueryItem(name: AdminPaths.Query.Audit.actor, value: actor)) }
+        if let since { query.append(URLQueryItem(name: AdminPaths.Query.Audit.since, value: since.formatted(.iso8601))) }
+        if let until { query.append(URLQueryItem(name: AdminPaths.Query.Audit.until, value: until.formatted(.iso8601))) }
+        if let limit { query.append(URLQueryItem(name: AdminPaths.Query.Audit.limit, value: String(limit))) }
+        return try await send(.GET, AdminPaths.audit, query: query)
     }
 
     // MARK: - Transport
@@ -204,7 +204,7 @@ public struct AdminClient: Sendable {
     }
 
     private func url(_ path: String, query: [URLQueryItem]) throws -> URL {
-        let url = baseURL.appending(path: "admin/v1/\(path)")
+        let url = baseURL.appending(path: "\(AdminPaths.prefix)/\(path)")
         guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
             throw AdminClientError.invalidURL(url.absoluteString)
         }

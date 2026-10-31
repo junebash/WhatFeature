@@ -13,32 +13,35 @@ struct AdminRoutes {
     let store: SQLiteStore
 
     func register(on group: RouterGroup<Context>) {
-        group.get("projects", use: listProjects)
-        group.post("projects", use: createProject)
-        group.get("projects/{project}", use: getProject)
+        typealias Paths = AdminPaths
+        func path(_ string: String) -> RouterPath { RouterPath(string) }
 
-        group.get("projects/{project}/environments", use: listEnvironments)
-        group.post("projects/{project}/environments", use: createEnvironment)
+        group.get(path(Paths.me), use: me)
 
-        group.get("projects/{project}/flags", use: listFlags)
-        group.post("projects/{project}/flags", use: createFlag)
-        group.get("projects/{project}/flags/{flag}", use: getFlag)
-        group.patch("projects/{project}/flags/{flag}", use: updateFlag)
-        group.delete("projects/{project}/flags/{flag}", use: deleteFlag)
-        group.post("projects/{project}/flags/{flag}/archive", use: archiveFlag)
-        group.post("projects/{project}/flags/{flag}/unarchive", use: unarchiveFlag)
+        group.get(path(Paths.projects), use: listProjects)
+        group.post(path(Paths.projects), use: createProject)
+        group.get(path(Paths.project(.project)), use: getProject)
 
-        group.get("projects/{project}/environments/{environment}/flags/{flag}", use: getConfig)
-        group.put("projects/{project}/environments/{environment}/flags/{flag}", use: setConfig)
-        group.post("projects/{project}/environments/{environment}/flags/{flag}/evaluate", use: dryRun)
+        group.get(path(Paths.environments(.project)), use: listEnvironments)
+        group.post(path(Paths.environments(.project)), use: createEnvironment)
 
-        group.get("tokens", use: listTokens)
-        group.post("tokens", use: createToken)
-        group.post("tokens/{token}/revoke", use: revokeToken)
+        group.get(path(Paths.flags(.project)), use: listFlags)
+        group.post(path(Paths.flags(.project)), use: createFlag)
+        group.get(path(Paths.flag(.project, .flag)), use: getFlag)
+        group.patch(path(Paths.flag(.project, .flag)), use: updateFlag)
+        group.delete(path(Paths.flag(.project, .flag)), use: deleteFlag)
+        group.post(path(Paths.archive(.project, .flag)), use: archiveFlag)
+        group.post(path(Paths.unarchive(.project, .flag)), use: unarchiveFlag)
 
-        group.get("audit", use: listAudit)
+        group.get(path(Paths.config(.project, .environment, .flag)), use: getConfig)
+        group.put(path(Paths.config(.project, .environment, .flag)), use: setConfig)
+        group.post(path(Paths.evaluate(.project, .environment, .flag)), use: dryRun)
 
-        group.get("me", use: me)
+        group.get(path(Paths.tokens), use: listTokens)
+        group.post(path(Paths.tokens), use: createToken)
+        group.post(path(Paths.revokeToken(.token)), use: revokeToken)
+
+        group.get(path(Paths.audit), use: listAudit)
     }
 
     /// The admin token making the request. Handy for checking that a token works.
@@ -83,16 +86,16 @@ struct AdminRoutes {
     @Sendable func listFlags(_ request: Request, context: Context) async throws -> Response {
         let project = try await project(context)
         let query = request.uri.queryParameters
-        var flags = try await store.flags(in: project.id, includeArchived: query["includeArchived"] == "true")
-        if let createdBy = query["createdBy"] {
+        var flags = try await store.flags(in: project.id, includeArchived: query[Substring(AdminPaths.Query.Flags.includeArchived)] == "true")
+        if let createdBy = query[Substring(AdminPaths.Query.Flags.createdBy)] {
             flags = flags.filter { $0.createdBy == createdBy }
         }
-        switch query["sort"].map(String.init) ?? "key" {
+        switch query[Substring(AdminPaths.Query.Flags.sort)].map(String.init) ?? "key" {
         case "key": break  // already sorted by key
         case "createdAt": flags.sort { ($0.createdAt, $0.key) < ($1.createdAt, $1.key) }
         case let other: throw AdminRequestError(message: "Unknown sort '\(other)'. Use 'key' or 'createdAt'.")
         }
-        switch query["order"].map(String.init) ?? "asc" {
+        switch query[Substring(AdminPaths.Query.Flags.order)].map(String.init) ?? "asc" {
         case "asc": break
         case "desc": flags.reverse()
         case let other: throw AdminRequestError(message: "Unknown order '\(other)'. Use 'asc' or 'desc'.")
@@ -203,7 +206,7 @@ struct AdminRoutes {
     }
 
     @Sendable func revokeToken(_ request: Request, context: Context) async throws -> Response {
-        let id = try context.parameters.require("token")
+        let id = try context.parameters.require(AdminPaths.Parameter.token.rawValue)
         return try .json(try await store.revokeToken(TokenID(id), by: context.actor), status: .ok)
     }
 
@@ -213,7 +216,7 @@ struct AdminRoutes {
     @Sendable func listAudit(_ request: Request, context: Context) async throws -> Response {
         let query = request.uri.queryParameters
         var projectID: ProjectID?
-        if let key = query["project"].map(String.init) {
+        if let key = query[Substring(AdminPaths.Query.Audit.project)].map(String.init) {
             guard let project = try await store.project(key: key) else {
                 throw StoreError.notFound("No project with key '\(key)'")
             }
@@ -226,17 +229,17 @@ struct AdminRoutes {
             }
             return date
         }
-        let limit = query["limit"].map { Int($0) ?? -1 } ?? 100
+        let limit = query[Substring(AdminPaths.Query.Audit.limit)].map { Int($0) ?? -1 } ?? 100
         guard (1...1_000).contains(limit) else {
             throw AdminRequestError(message: "'limit' must be a number from 1 to 1000")
         }
 
         let entries = try await store.auditEntries(
             projectID: projectID,
-            flagKey: query["flag"].map(String.init),
-            actor: query["actor"].map(String.init),
-            since: try date("since"),
-            until: try date("until"),
+            flagKey: query[Substring(AdminPaths.Query.Audit.flag)].map(String.init),
+            actor: query[Substring(AdminPaths.Query.Audit.actor)].map(String.init),
+            since: try date(Substring(AdminPaths.Query.Audit.since)),
+            until: try date(Substring(AdminPaths.Query.Audit.until)),
             limit: limit
         )
         return try .json(entries.map(AuditEntryResponse.init), status: .ok)
@@ -245,7 +248,7 @@ struct AdminRoutes {
     // MARK: - Lookups
 
     private func project(_ context: Context) async throws -> Project {
-        let key = try context.parameters.require("project")
+        let key = try context.parameters.require(AdminPaths.Parameter.project.rawValue)
         guard let project = try await store.project(key: key) else {
             throw StoreError.notFound("No project with key '\(key)'")
         }
@@ -262,7 +265,7 @@ struct AdminRoutes {
 
     private func projectEnvironmentAndFlag(_ context: Context) async throws -> (Project, WhatFeatureStorage.Environment, Flag) {
         let project = try await project(context)
-        let key = try context.parameters.require("environment")
+        let key = try context.parameters.require(AdminPaths.Parameter.environment.rawValue)
         guard let environment = try await store.environment(key: key, in: project.id) else {
             throw StoreError.notFound("No environment '\(key)' in '\(project.key)'")
         }
@@ -285,7 +288,7 @@ extension WhatFeatureRequestContext {
     }
 
     var flagKey: String {
-        get throws { try parameters.require("flag") }
+        get throws { try parameters.require(AdminPaths.Parameter.flag.rawValue) }
     }
 }
 

@@ -90,6 +90,43 @@ private func withLiveServer(_ test: @Sendable (AdminClient, SQLiteStore) async t
         }
     }
 
+    /// Every query parameter, sent through the client, so a renamed parameter fails here.
+    @Test func flagListQuery() async throws {
+        try await withLiveServer { client, _ in
+            let me = try await client.me()
+            _ = try await client.createProject(key: "demo")
+            _ = try await client.createFlag(project: "demo", CreateFlagRequest(key: "b-second", type: .boolean, variants: ["on": true]))
+            _ = try await client.createFlag(project: "demo", CreateFlagRequest(key: "a-third", type: .boolean, variants: ["on": true]))
+            _ = try await client.createFlag(project: "demo", CreateFlagRequest(key: "c-archived", type: .boolean, variants: ["on": true]))
+            _ = try await client.setArchived(true, project: "demo", key: "c-archived")
+
+            #expect(try await client.flags(project: "demo").map(\.key) == ["a-third", "b-second"])
+            #expect(try await client.flags(project: "demo", descending: true).map(\.key) == ["b-second", "a-third"])
+            #expect(try await client.flags(project: "demo", sort: .createdAt).map(\.key) == ["b-second", "a-third"])
+            #expect(try await client.flags(project: "demo", includeArchived: true).map(\.key) == ["a-third", "b-second", "c-archived"])
+            #expect(try await client.flags(project: "demo", createdBy: "token:\(me.id)").count == 2)
+            #expect(try await client.flags(project: "demo", createdBy: "token:nobody").isEmpty)
+        }
+    }
+
+    @Test func auditQuery() async throws {
+        try await withLiveServer { client, store in
+            let me = try await client.me()
+            _ = try await client.createProject(key: "demo")
+            _ = try await client.createProject(key: "other")
+            _ = try await client.createFlag(project: "demo", CreateFlagRequest(key: "beta", type: .boolean, variants: ["on": true]))
+            _ = try await store.createProject(key: "by-system", name: "x", by: .system("test"))
+
+            #expect(try await client.audit(project: "demo").map(\.action) == ["flag.create", "project.create"])
+            #expect(try await client.audit(flag: "beta").map(\.action) == ["flag.create"])
+            #expect(try await client.audit(actor: "system:test").map(\.action) == ["project.create", "token.create"])
+            #expect(try await client.audit(actor: "token:\(me.id)").count == 3)
+            #expect(try await client.audit(limit: 2).count == 2)
+            #expect(try await client.audit(since: Date().addingTimeInterval(3_600)).isEmpty)
+            #expect(try await client.audit(until: Date().addingTimeInterval(-3_600)).isEmpty)
+        }
+    }
+
     @Test func badTokenIs401() async throws {
         try await withLiveServer { client, _ in
             var wrong = client

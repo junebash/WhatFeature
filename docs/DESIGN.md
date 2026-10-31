@@ -69,7 +69,7 @@ Tokens are *not* cached: each request does one indexed lookup. So a token revoke
 |---|---|---|
 | `WhatFeatureCore` | library | Models, rule types, evaluation (`EnvironmentSnapshot.evaluate`), bucketing hash, validation. No networking, no database. Most tests live here. |
 | `WhatFeatureStorage` | library | `EvaluationStore` protocol, `SQLiteStore` (schema, migrations, snapshot cache, tokens, audit log), seed-file loading. Depends on Core. |
-| `WhatFeatureAPI` | library | Admin API request/response types, shared by server and client so they can't drift apart. |
+| `WhatFeatureAPI` | library | Admin API request/response types and `AdminPaths` (every path and query name), shared by server and client so they can't drift apart. |
 | `WhatFeatureServer` | library | Hummingbird app, OFREP and admin routes, token middleware, ETags. |
 | `WhatFeatureClient` | library | `AdminClient`: a typed client for the admin API (AsyncHTTPClient). |
 | `whatfeature` | executable | The server (`serve`) and the admin CLI (see **CLI**). Migrations run automatically whenever the database opens. |
@@ -273,6 +273,10 @@ Errors are `{"error": "…", "issues": ["…"]?}`: `400` for bad input (all vali
 Every admin write checks its input first (variant values match the flag type, rules reference real variants, rollout weights add up to 10,000), then writes the change and its audit entry in **one transaction**. Changing a flag's variants re-checks every environment's config, so a variant still in use can't be removed.
 
 Not yet: renaming or deleting projects and environments, and protection against two people editing the same config at once (an `If-Match` on the config version would do it).
+
+**One definition of every path.** `AdminPaths` (in `WhatFeatureAPI`) builds each path. The server calls it with placeholders to register routes (`AdminPaths.flag(.project, .flag)` → `projects/{project}/flags/{flag}`); the client calls it with real keys. Query parameter names live there too. Client tests run every method and query parameter against a live server.
+
+*Considered:* Point-Free's [swift-url-routing](https://github.com/pointfreeco/swift-url-routing), which makes one route enum that both parses requests and prints URLs. A spike with our 19 routes worked (every route round-tripped), but: the compiler crashed twice on valid router code ("failed to produce diagnostic"), case key paths had to be fully qualified, router types aren't `Sendable`, labeled enum payloads don't match, it adds 6 packages including swift-syntax, it's pre-1.0, and there's no Hummingbird integration. `AdminPaths` plus the live client tests get most of the benefit with none of that.
 
 Plus `GET /admin/v1/me` (the token making the request; used by `whatfeature login` and `whoami`), and `GET /health` with no auth.
 
