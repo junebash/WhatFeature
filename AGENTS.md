@@ -20,6 +20,7 @@ This repo uses trunk-based development.
   - an import is internal unless marked `public import`; use `public import` only when the module's types appear in public API
   - import every module a file uses directly
   - plain `async` functions run on the caller's actor; mark one `@concurrent` to run it off the actor
+- Never block a thread in async code: no semaphores, `Thread.sleep`, `waitUntilExit`, or synchronous waits on I/O. Blocking Swift concurrency's shared threads can stall everything else in the process (it froze the macOS test run for 60 seconds once). Use async APIs: GRDB's async `read`/`write`, `Task.sleep`, and [swift-subprocess](https://github.com/swiftlang/swift-subprocess) to run programs, never Foundation's `Process`. `Mutex` is fine for short, synchronous critical sections.
 - `WhatFeatureCore` also uses strict memory safety: mark unsafe code with `unsafe`.
 - Name clashes to know about: Foundation's `Predicate` (so ours is `Condition.Predicate`), Hummingbird's `Environment` (write `WhatFeatureStorage.Environment` where both are imported), and ArgumentParser's `@Flag` (the CLI module aliases `Flag` to ArgumentParser's; write the model as `WhatFeatureCore.Flag`).
 

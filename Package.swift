@@ -35,6 +35,10 @@ let package = Package(
         // current swift-open-feature. Neither has a release; Package.resolved pins the commits.
         .package(url: "https://github.com/junebash/swift-ofrep.git", branch: "main"),
         .package(url: "https://github.com/swift-open-feature/swift-open-feature.git", branch: "main"),
+        // Test only: runs the built CLI. Its paths are `FilePath`, from `System` on Apple platforms and
+        // swift-system's `SystemPackage` elsewhere, so tests that build one depend on swift-system directly.
+        .package(url: "https://github.com/swiftlang/swift-subprocess.git", from: "1.0.2"),
+        .package(url: "https://github.com/apple/swift-system.git", from: "1.5.0"),
     ],
     targets: [
         .target(
@@ -133,6 +137,8 @@ let package = Package(
                 .product(name: "HTTPTypes", package: "swift-http-types"),
                 .product(name: "OFREP", package: "swift-ofrep"),
                 .product(name: "OpenFeature", package: "swift-open-feature"),
+                .product(name: "Subprocess", package: "swift-subprocess"),
+                .product(name: "SystemPackage", package: "swift-system", condition: .when(platforms: [.linux])),
             ],
             swiftSettings: swiftSettings
         ),

@@ -78,7 +78,7 @@ Tokens are *not* cached: each request does one indexed lookup. So a token revoke
 
 - `WhatFeatureClientTests`: the admin client, over HTTP.
 - `WhatFeatureIntegrationTests`, OFREP: read by `swift-ofrep`, a real OpenFeature provider, so we find out if a real client disagrees with our hand-written JSON.
-- `WhatFeatureIntegrationTests`, CLI: the built `whatfeature` binary, run as a separate process the way it's used from a terminal (`login`, a flag from creation to deletion, `evaluate --app-json`, failures). Each test gets an empty config directory and a clean environment. `swift test` builds the binary; the tests find it in `.build/debug`.
+- `WhatFeatureIntegrationTests`, CLI: the built `whatfeature` binary, run as a separate process the way it's used from a terminal (`login`, a flag from creation to deletion, `evaluate --app-json`, failures). Each test gets an empty config directory and a clean environment. `swift test` builds the binary; the tests find it in `.build/debug` and run it with [swift-subprocess](https://github.com/swiftlang/swift-subprocess), which waits and reads output asynchronously, so no thread blocks.
 
 ## Data model
 

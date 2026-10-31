@@ -1,8 +1,15 @@
 import Foundation
 import HummingbirdTesting
+import Subprocess
 import Testing
 import WhatFeatureServer
 import WhatFeatureStorage
+
+#if canImport(Darwin)
+import System
+#else
+import SystemPackage
+#endif
 
 // The real `whatfeature` binary, run as a separate process against a real server, the way it's used from a
 // terminal. `swift test` builds the binary; these tests find it in `.build/debug`.
@@ -46,13 +53,13 @@ private struct Harness: Sendable {
 
     @discardableResult
     func run(_ arguments: String..., environment: [String: String]? = nil, input: String? = nil) async throws -> CLIResult {
-        try await runProcess(cliURL, arguments, environment: environment ?? self.environment(), input: input)
+        try await runProcess(arguments, environment: environment ?? self.environment(), input: input)
     }
 
     /// Runs and expects success, recording the output on failure so it's easy to see why.
     @discardableResult
     func succeed(_ arguments: String..., input: String? = nil, sourceLocation: SourceLocation = #_sourceLocation) async throws -> String {
-        let result = try await runProcess(cliURL, arguments, environment: environment(), input: input)
+        let result = try await runProcess(arguments, environment: environment(), input: input)
         #expect(
             result.status == 0,
             "whatfeature \(arguments.joined(separator: " ")) exited \(result.status): \(result.stderr)",
@@ -80,40 +87,35 @@ private func withCLI(_ test: @Sendable (Harness) async throws -> Void) async thr
     }
 }
 
-/// Waits for the process on a thread of its own. Waiting blocks a thread, and blocking one of Swift
-/// concurrency's shared threads can stall the whole test process: with a few CLI tests at once on a
-/// small machine, they took every shared thread, so the servers they were talking to couldn't answer.
-private func runProcess(_ executable: URL, _ arguments: [String], environment: [String: String], input: String?) async throws -> CLIResult {
-    try await withCheckedThrowingContinuation { continuation in
-        Thread {
-            continuation.resume(with: Result { try runProcessBlocking(executable, arguments, environment: environment, input: input) })
-        }.start()
+/// Runs the CLI with swift-subprocess, which waits for the process and reads its output asynchronously,
+/// so no thread is blocked while it runs.
+private func runProcess(_ arguments: [String], environment: [String: String], input: String?) async throws -> CLIResult {
+    // `Subprocess.Environment`, because Hummingbird has an `Environment` too.
+    let environment = Subprocess.Environment.custom(
+        Dictionary(uniqueKeysWithValues: environment.map { (Subprocess.Environment.Key(stringLiteral: $0.key), $0.value) })
+    )
+    // With no input, stdin is /dev/null: not a terminal, like a script.
+    if let input {
+        return try await runCLI(environment: environment, arguments: arguments, input: .string(input))
     }
+    return try await runCLI(environment: environment, arguments: arguments, input: .none)
 }
 
-private func runProcessBlocking(_ executable: URL, _ arguments: [String], environment: [String: String], input: String?) throws -> CLIResult {
-    let process = Process()
-    process.executableURL = executable
-    process.arguments = arguments
-    process.environment = environment
-    let stdout = Pipe(), stderr = Pipe(), stdin = Pipe()
-    process.standardOutput = stdout
-    process.standardError = stderr
-    process.standardInput = stdin
-    try process.run()
-    if let input {
-        stdin.fileHandleForWriting.write(Data(input.utf8))
-    }
-    try stdin.fileHandleForWriting.close()
-    // The commands print little, so reading one pipe and then the other can't fill a buffer and hang.
-    let out = stdout.fileHandleForReading.readDataToEndOfFile()
-    let err = stderr.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    return CLIResult(
-        status: process.terminationStatus,
-        stdout: String(decoding: out, as: UTF8.self),
-        stderr: String(decoding: err, as: UTF8.self)
+private func runCLI(environment: Subprocess.Environment, arguments: [String], input: some InputProtocol) async throws -> CLIResult {
+    let limit = 1 << 20
+    let result = try await Subprocess.run(
+        .path(FilePath(cliURL.path)),
+        arguments: Arguments(arguments),
+        environment: environment,
+        input: input,
+        output: .string(limit: limit),
+        error: .string(limit: limit)
     )
+    let status: Int32 = switch result.terminationStatus {
+    case .exited(let code): code
+    case .signaled(let signal): 128 + signal
+    }
+    return CLIResult(status: status, stdout: result.standardOutput, stderr: result.standardError)
 }
 
 @Suite struct CLITests {
