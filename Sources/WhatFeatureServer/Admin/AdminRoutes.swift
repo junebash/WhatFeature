@@ -2,6 +2,7 @@ import Foundation
 import Hummingbird
 import NIOCore
 import NIOFoundationCompat
+import WhatFeatureAPI
 import WhatFeatureCore
 import WhatFeatureStorage
 
@@ -36,6 +37,14 @@ struct AdminRoutes {
         group.post("tokens/{token}/revoke", use: revokeToken)
 
         group.get("audit", use: listAudit)
+
+        group.get("me", use: me)
+    }
+
+    /// The admin token making the request. Handy for checking that a token works.
+    @Sendable func me(_ request: Request, context: Context) async throws -> Response {
+        guard let token = context.adminToken else { throw HTTPError(.internalServerError) }
+        return try .json(token, status: .ok)
     }
 
     // MARK: - Projects
@@ -97,7 +106,7 @@ struct AdminRoutes {
         let flag = try await store.createFlag(
             key: body.key, type: body.type, variants: body.variants,
             description: body.description ?? "", isExperiment: body.isExperiment ?? false,
-            in: project.id, by: context.actor
+            defaultVariant: body.defaultVariant, in: project.id, by: context.actor
         )
         return try .json(try await detail(of: flag, in: project), status: .created)
     }
@@ -162,7 +171,7 @@ struct AdminRoutes {
             throw StoreError.notFound("No config for '\(flag.key)' in '\(environment.key)'")
         }
         let result = entry.evaluate(context: body.context)
-        return try .json(DryRunResult(result: result, configVersion: entry.config.version), status: .ok)
+        return try .json(DryRunResult(result, configVersion: entry.config.version), status: .ok)
     }
 
     // MARK: - Tokens

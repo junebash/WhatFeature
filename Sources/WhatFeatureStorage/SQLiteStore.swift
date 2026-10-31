@@ -96,7 +96,8 @@ public final class SQLiteStore: EvaluationStore {
 
     // MARK: - Flags
 
-    /// Creates a flag with a disabled config in every environment of the project.
+    /// Creates a flag with a disabled config in every environment of the project. `defaultVariant` is what
+    /// those configs serve once enabled; without it, it's the first variant name in sorted order.
     @discardableResult
     public func createFlag(
         key: String,
@@ -104,6 +105,7 @@ public final class SQLiteStore: EvaluationStore {
         variants: [String: JSONValue],
         description: String = "",
         isExperiment: Bool = false,
+        defaultVariant: String? = nil,
         in projectID: ProjectID,
         by actor: AuditActor
     ) async throws -> Flag {
@@ -116,6 +118,9 @@ public final class SQLiteStore: EvaluationStore {
         } catch {
             throw StoreError.invalid(error.issues)
         }
+        if let defaultVariant, variants[defaultVariant] == nil {
+            throw StoreError.invalid(["Default variant '\(defaultVariant)' isn't one of the flag's variants"])
+        }
 
         let environmentIDs = try await database.write { db in
             try Self.requireProject(projectID, db)
@@ -126,7 +131,7 @@ public final class SQLiteStore: EvaluationStore {
             try record.insert(db)
             let environmentIDs = try Self.environmentIDs(in: projectID, db)
             for environmentID in environmentIDs {
-                try Self.insertDefaultConfig(for: record, in: environmentID, db)
+                try Self.insertDefaultConfig(for: record, variant: defaultVariant, in: environmentID, db)
             }
             try Self.bumpVersions(of: environmentIDs, db)
             try self.audit(db, actor, "flag.create", project: projectID, flagKey: key, after: flag)
@@ -523,10 +528,15 @@ public final class SQLiteStore: EvaluationStore {
         }
     }
 
-    /// New flags and environments start disabled. The default variant doesn't matter while disabled, but it
-    /// must exist, so it's the first variant name in sorted order.
-    private static func insertDefaultConfig(for flag: FlagRecord, in environmentID: EnvironmentID, _ db: Database) throws {
-        let firstVariant = flag.variants.keys.sorted().first ?? ""
+    /// New flags and environments start disabled. The default variant only matters once someone enables the
+    /// flag; unless given, it's the first variant name in sorted order (so boolean on/off flags get `off`).
+    private static func insertDefaultConfig(
+        for flag: FlagRecord,
+        variant: String? = nil,
+        in environmentID: EnvironmentID,
+        _ db: Database
+    ) throws {
+        let firstVariant = variant ?? flag.variants.keys.sorted().first ?? ""
         try FlagConfigRecord(
             environmentID: environmentID.rawValue,
             projectID: flag.projectID,

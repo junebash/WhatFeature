@@ -55,6 +55,19 @@ private func makeStore() async throws -> (SQLiteStore, Project, dev: Environment
         }
     }
 
+    @Test func defaultVariantCanBeChosen() async throws {
+        let (store, project, dev, _) = try await makeStore()
+        try await store.createFlag(
+            key: "welcome", type: .string, variants: ["short": "Hi", "long": "Welcome back"], defaultVariant: "short",
+            in: project.id, by: me
+        )
+        #expect(try await store.config(flagKey: "welcome", in: dev.id)?.defaultResult == .variant("short"))
+
+        await #expect(throws: StoreError.invalid(["Default variant 'medium' isn't one of the flag's variants"])) {
+            try await store.createFlag(key: "other", type: .string, variants: ["a": "A"], defaultVariant: "medium", in: project.id, by: me)
+        }
+    }
+
     @Test func rejectsInvalidFlag() async throws {
         let (store, project, _, _) = try await makeStore()
         await #expect(throws: StoreError.invalid(["Variant 'on' doesn't match the flag type 'boolean'"])) {

@@ -69,8 +69,10 @@ Tokens are *not* cached: each request does one indexed lookup. So a token revoke
 |---|---|---|
 | `WhatFeatureCore` | library | Models, rule types, evaluation (`EnvironmentSnapshot.evaluate`), bucketing hash, validation. No networking, no database. Most tests live here. |
 | `WhatFeatureStorage` | library | `EvaluationStore` protocol, `SQLiteStore` (schema, migrations, snapshot cache, tokens, audit log), seed-file loading. Depends on Core. |
-| `WhatFeatureServer` | library | Hummingbird app, OFREP routes, token middleware, ETags. Depends on Storage and Core. |
-| `whatfeature` | executable | CLI: `serve` (`--database`, `--seed`), `token create`, `token list`, `token revoke`. Migrations run automatically whenever the database opens. |
+| `WhatFeatureAPI` | library | Admin API request/response types, shared by server and client so they can't drift apart. |
+| `WhatFeatureServer` | library | Hummingbird app, OFREP and admin routes, token middleware, ETags. |
+| `WhatFeatureClient` | library | `AdminClient`: a typed client for the admin API (AsyncHTTPClient). |
+| `whatfeature` | executable | The server (`serve`) and the admin CLI (see **CLI**). Migrations run automatically whenever the database opens. |
 
 ## Data model
 
@@ -272,7 +274,43 @@ Every admin write checks its input first (variant values match the flag type, ru
 
 Not yet: renaming or deleting projects and environments, and protection against two people editing the same config at once (an `If-Match` on the config version would do it).
 
-Plus `GET /health` with no auth.
+Plus `GET /admin/v1/me` (the token making the request; used by `whatfeature login` and `whoami`), and `GET /health` with no auth.
+
+`POST …/flags` also takes an optional `defaultVariant`: what the new, disabled configs serve once someone enables them. Without it, that's the first variant name in sorted order (`off` for on/off flags). Environments created later always use the sorted-first rule.
+
+## CLI
+
+Every admin task has a command. They talk to a running server through the admin API, not to the database file, for three reasons:
+
+1. The server only refreshes its in-memory snapshots for changes *it* makes. A CLI writing flags to the file would leave a running server serving stale values.
+2. The server will usually run somewhere else. An HTTP CLI works from a laptop.
+3. Changes are recorded in the audit log under your admin token.
+
+The one exception is `whatfeature db token …`, which works on the file directly. It exists for the first admin token, which can't come from the API because nothing can call the API yet. Tokens aren't cached, so this is safe even while the server runs.
+
+| Command | Does |
+|---|---|
+| `login` / `logout` / `whoami` | Save, forget, or show the server URL, admin token and default project |
+| `projects list\|show\|create` | |
+| `environments list\|create` (alias `envs`) | |
+| `flags list\|show\|create\|update\|archive\|unarchive\|delete` | `show` gives the state in every environment; `delete` asks for confirmation |
+| `config show\|set` | See or replace a whole config (JSON from a file, stdin, or `--json`) |
+| `config enable\|disable` | Flip `enabled`, keeping the rules. `disable` is the kill switch. |
+| `config serve <flag> <variant>` | Everyone gets one variant: clears rules, sets the default, enables |
+| `config rollout <flag> on=10 off=90` | Percentage split of the default (two decimals allowed), keeping rules, and enables |
+| `evaluate <flag>` | The dry run: what a context gets and why |
+| `tokens list\|create\|revoke` | Through the server |
+| `audit` | Filters: project, flag, actor, since, until, limit |
+| `db token create\|list\|revoke` | On the database file (bootstrap) |
+
+Every read command takes `--json`.
+
+Settings resolve flag → environment variable → `login` file: `--url` / `WHATFEATURE_URL`, `--token` / `WHATFEATURE_TOKEN`, `-p` / `WHATFEATURE_PROJECT`. `login` saves them to `$XDG_CONFIG_HOME/whatfeature/config.json` (else `~/.config/…`), created with `0600` permissions. If `login` gets no `--token`, it asks for one, so the secret stays out of shell history. (On macOS, the Keychain would be nicer; maybe later.)
+
+Parsing rules worth knowing:
+
+- **`--attr name=value` is always a string.** Otherwise `appVersion=2.0` would become the number 2.0 and silently stop matching semver rules. `--attr-json` is for typed values.
+- **`--variant name=value` is read according to the flag's type**: `true`/`false` for booleans, plain text for strings, numbers for numbers, JSON for objects.
 
 ## Auth and tokens
 
@@ -283,7 +321,7 @@ Plus `GET /health` with no auth.
 - Revoking sets `revokedAt`. It works for every token, admin tokens included.
 - **Evaluation tokens are public.** Anything shipped in an app binary can be pulled out of it. So they are read-only and limited to one project + environment.
 - `scopes` is a list from the start, even though v1 only checks `admin` vs `evaluate`. Roles can be added later without a schema change.
-- **Bootstrap:** run `whatfeature token create --admin --name "June laptop"` on the server. It prints the token once. `whatfeature token list` and `whatfeature token revoke <id>` manage them; evaluation tokens come from `token create --project <key> --environment <key>`.
+- **Bootstrap:** run `whatfeature db token create --admin --name "June laptop"` on the server machine. It writes to the database file directly and prints the token once. From then on, the CLI's `tokens` commands (or `/admin/v1/tokens`) manage tokens through the server.
 
 ## Audit log
 

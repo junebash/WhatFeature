@@ -21,3 +21,8 @@ This repo uses trunk-based development.
   - import every module a file uses directly
   - plain `async` functions run on the caller's actor; mark one `@concurrent` to run it off the actor
 - `WhatFeatureCore` also uses strict memory safety: mark unsafe code with `unsafe`.
+- Name clashes to know about: Foundation's `Predicate` (so ours is `Condition.Predicate`), Hummingbird's `Environment` (write `WhatFeatureStorage.Environment` where both are imported), and ArgumentParser's `@Flag` (the CLI module aliases `Flag` to ArgumentParser's; write the model as `WhatFeatureCore.Flag`).
+
+## CLI
+
+- Admin commands go through `AdminClient` and the admin API, never the database file. Only `db token …` touches the file, for bootstrapping.

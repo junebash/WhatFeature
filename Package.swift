@@ -18,6 +18,7 @@ let package = Package(
         .library(name: "WhatFeatureCore", targets: ["WhatFeatureCore"]),
         .library(name: "WhatFeatureStorage", targets: ["WhatFeatureStorage"]),
         .library(name: "WhatFeatureServer", targets: ["WhatFeatureServer"]),
+        .library(name: "WhatFeatureClient", targets: ["WhatFeatureClient"]),
         .executable(name: "whatfeature", targets: ["whatfeature"]),
     ],
     dependencies: [
@@ -28,6 +29,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-http-types.git", from: "1.0.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.6.0"),
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.0"),
+        .package(url: "https://github.com/swift-server/async-http-client.git", from: "1.26.0"),
     ],
     targets: [
         .target(
@@ -45,8 +47,27 @@ let package = Package(
             swiftSettings: swiftSettings
         ),
         .target(
+            name: "WhatFeatureAPI",
+            dependencies: ["WhatFeatureCore", "WhatFeatureStorage"],
+            swiftSettings: swiftSettings
+        ),
+        .target(
+            name: "WhatFeatureClient",
+            dependencies: [
+                "WhatFeatureAPI",
+                "WhatFeatureCore",
+                "WhatFeatureStorage",
+                .product(name: "AsyncHTTPClient", package: "async-http-client"),
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+                .product(name: "NIOFoundationCompat", package: "swift-nio"),
+            ],
+            swiftSettings: swiftSettings
+        ),
+        .target(
             name: "WhatFeatureServer",
             dependencies: [
+                "WhatFeatureAPI",
                 "WhatFeatureCore",
                 "WhatFeatureStorage",
                 .product(name: "Crypto", package: "swift-crypto"),
@@ -61,6 +82,9 @@ let package = Package(
         .executableTarget(
             name: "whatfeature",
             dependencies: [
+                "WhatFeatureAPI",
+                "WhatFeatureClient",
+                "WhatFeatureCore",
                 "WhatFeatureServer",
                 "WhatFeatureStorage",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
@@ -76,6 +100,22 @@ let package = Package(
         .testTarget(
             name: "WhatFeatureStorageTests",
             dependencies: ["WhatFeatureCore", "WhatFeatureStorage"],
+            swiftSettings: swiftSettings
+        ),
+        .testTarget(
+            name: "WhatFeatureClientTests",
+            dependencies: [
+                "WhatFeatureClient",
+                "WhatFeatureCore",
+                "WhatFeatureServer",
+                "WhatFeatureStorage",
+                .product(name: "HummingbirdTesting", package: "hummingbird"),
+            ],
+            swiftSettings: swiftSettings
+        ),
+        .testTarget(
+            name: "WhatFeatureCLITests",
+            dependencies: ["whatfeature", "WhatFeatureCore"],
             swiftSettings: swiftSettings
         ),
         .testTarget(

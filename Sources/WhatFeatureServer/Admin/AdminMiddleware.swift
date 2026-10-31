@@ -1,4 +1,5 @@
 import HTTPTypes
+import WhatFeatureAPI
 import Hummingbird
 import WhatFeatureStorage
 
@@ -54,9 +55,4 @@ struct AdminErrorMiddleware: RouterMiddleware {
 /// Something wrong with the request itself, like a body that isn't valid JSON. Always `400`.
 struct AdminRequestError: Error {
     var message: String
-}
-
-struct AdminErrorBody: Encodable {
-    var error: String
-    var issues: [String]?
 }
