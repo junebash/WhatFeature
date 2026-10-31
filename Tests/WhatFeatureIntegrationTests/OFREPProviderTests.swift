@@ -88,13 +88,13 @@ private func context(_ targetingKey: String? = nil, _ fields: [String: OpenFeatu
         }
     }
 
-    /// The integer-vs-float open question in DESIGN.md, seen from a real client: we send `0`, which
-    /// `swift-ofrep` reads as an integer, so asking for a `Double` doesn't get the value.
+    /// JSON has one number type, so we send a whole-number value like 0.0 as `0`. A client asking for a
+    /// `Double` must still get it. (Upstream swift-ofrep gave TYPE_MISMATCH here; our fork fixes it.)
     @Test func wholeNumberAsDouble() async throws {
         try await withProvider { provider in
             let resolution = await provider.resolution(of: "discount", defaultValue: -1.0, context: context())
-            #expect(resolution.value == -1.0)
-            #expect(resolution.error?.code == .typeMismatch)
+            #expect(resolution.value == 0)
+            #expect(resolution.error == nil)
         }
     }
 

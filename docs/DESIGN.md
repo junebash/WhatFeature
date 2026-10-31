@@ -429,14 +429,15 @@ CI (`.github/workflows/ci.yml`) runs `swift test` on every push to `main` and on
 ## Open questions
 
 1. **Hosting** (see **Deployment**). The cheapest option that keeps a long-lived process (needed for SSE in v1.1) wins.
-2. **Integer vs. float.** OFREP has separate integer and float value types; we have one `number`. `swift-ofrep` decodes a whole number like `0` as an integer, so asking it for a `Double` flag whose value happens to be whole gives `TYPE_MISMATCH` and the app's default. Confirmed by a live test (`wholeNumberAsDouble`, which pins today's behavior). Options: split `number` into `integer` and `float` flag types, or accept the quirk. Not urgent until a number flag exists.
+2. **Integer vs. float.** OFREP has separate integer and float value types; we have one `number`. JSON can't tell `0` from `0.0`, so a whole-number value always goes out as an integer. Upstream `swift-ofrep` then gave `TYPE_MISMATCH` to an app asking for a `Double`; our fork accepts it (live test `wholeNumberAsDouble`). Asking for an `Int` and getting `2.5` is still a mismatch, which is right. Leaning towards keeping one `number` type. Other clients (the iOS SDK's OFREP provider) aren't checked yet.
 
 ## Clients
 
-- **Server-side Swift:** [`swift-ofrep`](https://github.com/swift-open-feature/swift-ofrep) (built on `swift-open-feature`) uses the single-flag endpoint. **Upstream doesn't work with WhatFeature; use [our fork](https://github.com/junebash/swift-ofrep)**, which the live tests also use. Upstream (7 stars, no releases, last code change March 2025) has three problems the fork fixes:
+- **Server-side Swift:** [`swift-ofrep`](https://github.com/swift-open-feature/swift-ofrep) (built on `swift-open-feature`) uses the single-flag endpoint. **Upstream doesn't work with WhatFeature; use [our fork](https://github.com/junebash/swift-ofrep)**, which the live tests also use. Upstream (7 stars, no releases, last code change March 2025) has four problems the fork fixes:
   1. **No way to send a token.** The fork adds `OFREPProvider(serverURL:headerFields:)`, e.g. `headerFields: [.authorization: "Bearer wf_eval_…"]`.
   2. **It doesn't build** against current `swift-open-feature`, which made Service Lifecycle an opt-in trait.
   3. **It predates OFREP's "code default" result** (August 2025), so a disabled flag came back as an error instead of the app's default.
+  4. **A whole number asked for as a `Double`** (e.g. `0`) was a type mismatch. JSON has one number type, so that's a valid `Double`.
 
   Each is its own commit, ready to offer upstream as a pull request.
 - **iOS / Apple platforms:** the OpenFeature Swift SDK ([open-feature/swift-sdk](https://github.com/open-feature/swift-sdk)) with an OFREP provider for static contexts. That provider uses the bulk endpoint. One exists in go-feature-flag's Swift provider; check whether it is usable on its own.
