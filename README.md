@@ -131,3 +131,5 @@ CLI (flag, else env, else what `login` saved):
 ```bash
 swift test
 ```
+
+The live OFREP tests use [our fork of `swift-ofrep`](https://github.com/junebash/swift-ofrep), the server-side Swift OFREP provider: upstream can't send a token yet. See "Clients" in the design doc.
