@@ -358,18 +358,12 @@ What they do (checked October 2026):
 
 So:
 
-- **Admin tokens:** an in-memory token bucket per token, 600 requests a minute by default. The bucket holds one minute's worth, so that's up to 600 at once, then 10 a second. In-memory works because there is a single instance.
-- **Evaluation tokens:** no limit by default. **Per-IP limits belong in the proxy in front of the server** (e.g. Cloudflare rate-limiting rules if we use Cloudflare Tunnel). Decide when the host is chosen.
-- **An abused evaluation token:** revoke it and ship a new one (`whatfeature tokens revoke`).
-- **Opt-in per-token evaluation limit**, for emergencies or testing: `serve --evaluation-rate-limit` / `RATE_LIMIT_EVALUATION`. The admin limit is `--admin-rate-limit` / `RATE_LIMIT_ADMIN`. Each takes a whole number of requests a minute, or `off`.
+- **Admin tokens:** an in-memory token bucket per token, 600 requests a minute by default (`serve --admin-rate-limit` / `RATE_LIMIT_ADMIN`; a whole number, or `off`). The bucket holds one minute's worth, so that's up to 600 at once, then 10 a second. In-memory works because there is a single instance.
+  - **Checked after the token.** Only real tokens get a bucket (keyed by the token's hash), so made-up tokens can't fill memory. They get `401` as before.
+  - **Over the limit → `429`** with `Retry-After` in whole seconds and `{"error": "Too many requests. Try again in N seconds."}`. Logged at `notice` with the token ID, never the secret.
+- **Evaluation tokens: the server never limits them.** **Per-IP limits belong in the proxy in front of the server** (e.g. Cloudflare rate-limiting rules if we use Cloudflare Tunnel). Decide when the host is chosen. An abused token gets revoked and replaced (`whatfeature tokens revoke`).
 
-How a limit behaves when on:
-
-- **Checked after the token.** Only real tokens get a bucket (keyed by the token's hash), so made-up tokens can't fill memory. They get `401` as before.
-- **Over the limit → `429` with `Retry-After`.** Every request counts, including `304`s.
-  - **OFREP:** `Retry-After` is an ISO 8601 date (`2024-02-07T12:00:00Z`), rounded up to the next second. That's what OFREP's spec shows, and `swift-ofrep` can't read plain seconds. No body, as the spec defines none.
-  - **Admin:** `Retry-After` in whole seconds (the usual HTTP form), plus `{"error": "Too many requests. Try again in N seconds."}`.
-- Logged at `notice`, with the environment ID (evaluation) or token ID (admin). Never the secret.
+*Considered:* an opt-in per-token evaluation limit. It was built, then removed: it's the very thing the services above avoid, and it would likely never be turned on. If it's ever needed, it's in the git history (commit `364e653`). Note for that day: OFREP's spec gives `Retry-After` as an ISO 8601 date, and `swift-ofrep` can't read plain seconds.
 
 ## Deployment
 

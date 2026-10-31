@@ -86,13 +86,13 @@ import WhatFeatureServer
 
 @Suite struct RateLimitParsingTests {
     @Test func perMinuteOrOff() throws {
-        #expect(try parseRateLimit("600", what: "x") == RateLimit(requestsPerMinute: 600))
-        #expect(try parseRateLimit("off", what: "x") == nil)
-        #expect(try parseRateLimit("OFF", what: "x") == nil)
+        #expect(try parseRateLimit("600") == RateLimit(requestsPerMinute: 600))
+        #expect(try parseRateLimit("off") == nil)
+        #expect(try parseRateLimit("OFF") == nil)
     }
 
     @Test(arguments: ["0", "-5", "1.5", "lots", ""])
     func rejects(_ text: String) {
-        #expect(throws: (any Error).self) { try parseRateLimit(text, what: "x") }
+        #expect(throws: (any Error).self) { try parseRateLimit(text) }
     }
 }

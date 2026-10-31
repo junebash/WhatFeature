@@ -112,10 +112,10 @@ func confirm(_ question: String, expecting answer: String) -> Bool {
 }
 
 /// Requests per minute, or `off` for no limit.
-func parseRateLimit(_ text: String, what: String) throws -> RateLimit? {
+func parseRateLimit(_ text: String) throws -> RateLimit? {
     if text.lowercased() == "off" { return nil }
     guard let perMinute = Int(text), perMinute > 0 else {
-        throw ValidationError("\(what) must be a whole number of requests per minute, or 'off'. Got '\(text)'.")
+        throw ValidationError("The admin rate limit must be a whole number of requests per minute, or 'off'. Got '\(text)'.")
     }
     return RateLimit(requestsPerMinute: perMinute)
 }

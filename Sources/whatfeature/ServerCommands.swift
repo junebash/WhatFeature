@@ -27,20 +27,13 @@ struct Serve: AsyncParsableCommand {
     @Option(help: "JSON file of projects, environments, tokens and flags to load at startup (development only). Env: SEED_FILE.")
     var seed: String?
 
-    @Option(help: "Requests per minute for each evaluation token, or 'off'. Env: RATE_LIMIT_EVALUATION. Off by default, because every install of an app shares one token. (default: off)")
-    var evaluationRateLimit: String?
-
-    @Option(help: "Requests per minute for each admin token, or 'off'. Env: RATE_LIMIT_ADMIN. (default: \(RateLimits.default.admin!.requestsPerMinute))")
+    @Option(help: "Requests per minute for each admin token, or 'off'. Env: RATE_LIMIT_ADMIN. (default: \(RateLimit.adminDefault.requestsPerMinute))")
     var adminRateLimit: String?
 
     func run() async throws {
-        let environment = ProcessInfo.processInfo.environment
-        var rateLimits = RateLimits.default
-        if let text = evaluationRateLimit ?? environment["RATE_LIMIT_EVALUATION"] {
-            rateLimits.evaluation = try parseRateLimit(text, what: "The evaluation rate limit")
-        }
-        if let text = adminRateLimit ?? environment["RATE_LIMIT_ADMIN"] {
-            rateLimits.admin = try parseRateLimit(text, what: "The admin rate limit")
+        var rateLimit: RateLimit? = .adminDefault
+        if let text = adminRateLimit ?? ProcessInfo.processInfo.environment["RATE_LIMIT_ADMIN"] {
+            rateLimit = try parseRateLimit(text)
         }
 
         let store = try database.open()
@@ -50,7 +43,7 @@ struct Serve: AsyncParsableCommand {
         let app = buildApplication(
             store: store,
             configuration: .init(address: .hostname(host, port: port), serverName: "WhatFeature"),
-            rateLimits: rateLimits
+            adminRateLimit: rateLimit
         )
         try await app.runService()
     }

@@ -1,7 +1,11 @@
 import Synchronization
 
-/// How many requests one token may make: up to `requestsPerMinute` at once, refilling at
+/// How many requests one admin token may make: up to `requestsPerMinute` at once, refilling at
 /// `requestsPerMinute / 60` per second. This is a token bucket, with the bucket holding one minute's worth.
+///
+/// Only admin tokens are limited. Evaluation tokens are public and shared by every install of an app, so a
+/// per-token limit would let one device (or anyone who pulls the token out of the app) get every install a
+/// `429`. Those are for a proxy to limit by client IP. See "Rate limiting" in DESIGN.md.
 public struct RateLimit: Sendable, Hashable {
     public var requestsPerMinute: Int
 
@@ -9,34 +13,13 @@ public struct RateLimit: Sendable, Hashable {
         precondition(requestsPerMinute > 0, "Use nil for no limit")
         self.requestsPerMinute = requestsPerMinute
     }
-}
 
-/// Limits for each kind of token. `nil` means no limit.
-public struct RateLimits: Sendable, Hashable {
-    public var evaluation: RateLimit?
-    public var admin: RateLimit?
-
-    public init(evaluation: RateLimit?, admin: RateLimit?) {
-        self.evaluation = evaluation
-        self.admin = admin
-    }
-
-    /// Admin tokens are secret and belong to one person, so a per-token limit fits them.
-    ///
-    /// Evaluation tokens have no limit by default. One is public and shared by every install of an app, so
-    /// a per-token limit would let one device (or anyone who pulls the token out of the app) get every
-    /// install a `429`. Limit those by client IP at the proxy instead. See "Rate limiting" in DESIGN.md.
-    public static let `default` = RateLimits(
-        evaluation: nil,
-        admin: RateLimit(requestsPerMinute: 600)
-    )
-
-    public static let off = RateLimits(evaluation: nil, admin: nil)
+    public static let adminDefault = RateLimit(requestsPerMinute: 600)
 }
 
 /// One bucket per key, held in memory. That works because there's a single server instance.
 ///
-/// Keys are token hashes, and the middlewares only ask after the token checks out, so there is at most
+/// Keys are token hashes, and the middleware only asks after the token checks out, so there is at most
 /// one bucket per real token. Made-up tokens never get a bucket.
 final class RateLimiter: Sendable {
     private struct Bucket {

@@ -104,7 +104,6 @@ Server:
 | `--host` | `HOST` | `127.0.0.1` |
 | `--port` | `PORT` | `8080` |
 | `--seed` | `SEED_FILE` | none |
-| `--evaluation-rate-limit` | `RATE_LIMIT_EVALUATION` | `off` (or requests a minute per token; see "Rate limiting" in the design doc before turning it on) |
 | `--admin-rate-limit` | `RATE_LIMIT_ADMIN` | `600` requests a minute per token (`off` to turn off) |
 
 CLI (flag, else env, else what `login` saved):
