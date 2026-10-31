@@ -405,14 +405,15 @@ CI (`.github/workflows/ci.yml`) runs `swift test` on every push to `main` and on
 - **Admin API:** projects, environments, flags (create, update, archive, delete), per-environment configs, dry-run evaluation, tokens, audit log, `me`.
 - **CLI:** every admin task, through the admin API (see **CLI**), plus `db token` for bootstrapping.
 - **A/B assignment:** sticky rollouts, plus the `isExperiment` marker on flags, sent to apps as OFREP flag metadata (`"experiment": true`).
-- **CI:** `swift test` on Linux and macOS.
+- **CI:** `swift test` on Linux and macOS, and a job that builds the Docker image, starts it, and checks the admin API and OFREP answer.
+- **Docker image:** two stages, building with `swift:6.4.2-noble` and running on `ubuntu:noble` with the Swift runtime and Foundation linked statically. The binary needs only `libsqlite3`, `libstdc++`, `libgcc` and `zlib` besides libc (checked with `ldd`). Runs as a non-root user, data on the `/data` volume.
+- **`justfile`:** recipes for building, testing, running a dev server, the CLI, and the Docker image.
 - **Rate limiting:** per admin token, `429` with `Retry-After`. Evaluation tokens are left to a proxy, like the big flag services do (see **Rate limiting**).
 
 ### Left for v1
 
-1. **Dockerfile.** Docker isn't available in the dev container, so it needs a first build on a Mac. The official Swift images lack SQLite's headers: the build stage needs `libsqlite3-dev` (as in CI), the run stage `libsqlite3-0`.
-2. **Pick a host and deploy.** See **Deployment** and **Open questions**.
-3. **Try it on a Mac by hand.** CI builds and tests on macOS, but nobody has opened the package in Xcode or used the CLI from a Mac yet.
+1. **Pick a host and deploy.** See **Deployment** and **Open questions**.
+2. **Try it on a Mac by hand.** CI builds and tests on macOS, but nobody has opened the package in Xcode or used the CLI from a Mac yet.
 
 ### Known gaps (fine for now; fix if they start to hurt)
 

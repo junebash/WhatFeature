@@ -32,3 +32,37 @@ jobs:
       - uses: actions/checkout@v7
       - run: swift --version
       - run: swift test
+
+  # The Docker image: builds, starts, and answers. Same steps as `just docker-build`, `docker-run` and
+  # `docker-token`.
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker build -t whatfeature .
+      - name: Start it with the example flags
+        run: |
+          docker run -d --name whatfeature -p 8080:8080 \
+            -v whatfeature-data:/data \
+            -v "$PWD/examples:/seed:ro" -e SEED_FILE=/seed/seed.json \
+            whatfeature
+          for attempt in $(seq 1 30); do
+            curl -fsS http://localhost:8080/health && exit 0
+            sleep 1
+          done
+          echo "The server didn't answer /health in 30 seconds."
+          exit 1
+      - name: Admin token, admin API and OFREP
+        run: |
+          token=$(docker exec whatfeature whatfeature db token create --admin --name ci | grep -o 'wf_admin_[A-Za-z0-9]*')
+          curl -fsS -H "Authorization: Bearer $token" http://localhost:8080/admin/v1/me
+          echo
+          curl -fsS -X POST http://localhost:8080/ofrep/v1/evaluate/flags \
+            -H "Authorization: Bearer wf_eval_dev_local_only" -H "Content-Type: application/json" \
+            -d '{"context": {"targetingKey": "june", "country": "US"}}' | tee response.json
+          echo
+          grep -q '"key":"new-onboarding"' response.json
+      - name: Container logs
+        if: always()
+        run: docker logs whatfeature || true

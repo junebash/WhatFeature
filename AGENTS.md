@@ -6,6 +6,7 @@ This repo uses trunk-based development.
 
 - Commit straight to `main` and push. No feature branches or pull requests needed.
 - Keep commits small and focused, with clear messages.
+- Common commands are recipes in the [`justfile`](justfile) (`just` lists them). Keep it working when commands change.
 - Keep `main` working: run `swift build` and `swift test` before pushing. CI (`.github/workflows/ci.yml`) runs `swift test` on Linux and macOS for every push; check it after pushing.
 
 ## Context

@@ -4,11 +4,29 @@
 
 A small feature flag service written in Swift. Flags are evaluated on the server and served over the [OpenFeature Remote Evaluation Protocol (OFREP)](https://github.com/open-feature/protocol), so any OpenFeature SDK with an OFREP provider can use it.
 
-Status: early, but usable end to end: OFREP evaluation, an admin API and CLI, SQLite storage, tokens, and an audit log. No UI. Still to do for v1: a Dockerfile and a host. CI tests every push on Linux and macOS. The full list is under "Status and roadmap" in [`docs/DESIGN.md`](docs/DESIGN.md), along with the design and the full admin API.
+Status: early, but usable end to end: OFREP evaluation, an admin API and CLI, SQLite storage, tokens, and an audit log. No UI. Still to do for v1: a host. CI tests every push on Linux and macOS, and builds and starts the Docker image. The full list is under "Status and roadmap" in [`docs/DESIGN.md`](docs/DESIGN.md), along with the design and the full admin API.
 
 ## Try it
 
 Needs Swift 6.2 or later. On Linux, also SQLite's development files (`apt install libsqlite3-dev`).
+
+The quickest way is the [`justfile`](justfile) (`brew install just`; run `just` to list the recipes):
+
+```bash
+just token
+```
+
+```bash
+just serve
+```
+
+```bash
+just login
+```
+
+`just token` prints an admin token for `dev.sqlite`; `just serve` runs the server on it with the example flags; `just login` (in another terminal) asks for the token and saves it, so `just cli flags list` and the rest work. `just app-flags` shows what an app gets. `just reset` starts over.
+
+Or by hand:
 
 ```bash
 swift run whatfeature serve --seed examples/seed.json
@@ -35,6 +53,22 @@ curl -s -i -X POST localhost:8080/ofrep/v1/evaluate/flags \
   -H "Authorization: Bearer wf_eval_dev_local_only" \
   -d '{"context": {"targetingKey": "user-123", "appVersion": "2.1"}}'
 ```
+
+### Docker
+
+```bash
+just docker-build
+```
+
+```bash
+just docker-run
+```
+
+```bash
+just docker-token
+```
+
+The image runs the server on port 8080, with its SQLite database on the `/data` volume (`whatfeature-data` in the recipe). Settings are the environment variables below; `HOST`, `PORT` and `DATABASE_PATH` are already set for the container. `just docker-token` creates an admin token inside the running container; then `just login` works the same as without Docker. `just docker-reset` deletes the container and its data.
 
 ## Manage flags
 
