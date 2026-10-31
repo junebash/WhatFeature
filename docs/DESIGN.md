@@ -74,7 +74,11 @@ Tokens are *not* cached: each request does one indexed lookup. So a token revoke
 | `WhatFeatureClient` | library | `AdminClient`: a typed client for the admin API (AsyncHTTPClient). |
 | `whatfeature` | executable | The server (`serve`) and the admin CLI (see **CLI**). Migrations run automatically whenever the database opens. |
 
-**Live tests.** Most server tests hand requests straight to the router (fast, no socket). Two suites run a real server on a real port: `WhatFeatureClientTests` (the admin client, over HTTP) and `WhatFeatureIntegrationTests` (OFREP read by `swift-ofrep`, a real OpenFeature provider, so we find out if a real client disagrees with our hand-written JSON).
+**Live tests.** Most server tests hand requests straight to the router (fast, no socket). These run a real server on a real port:
+
+- `WhatFeatureClientTests`: the admin client, over HTTP.
+- `WhatFeatureIntegrationTests`, OFREP: read by `swift-ofrep`, a real OpenFeature provider, so we find out if a real client disagrees with our hand-written JSON.
+- `WhatFeatureIntegrationTests`, CLI: the built `whatfeature` binary, run as a separate process the way it's used from a terminal (`login`, a flag from creation to deletion, `evaluate --app-json`, failures). Each test gets an empty config directory and a clean environment. `swift test` builds the binary; the tests find it in `.build/debug`.
 
 ## Data model
 
