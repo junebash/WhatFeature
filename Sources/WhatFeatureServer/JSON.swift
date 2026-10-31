@@ -2,6 +2,7 @@ import Foundation
 import Hummingbird
 import NIOCore
 import NIOFoundationCompat
+import WhatFeatureCore
 
 extension JSONEncoder {
     /// Sorted keys so responses read the same every time; ISO 8601 dates.
@@ -51,5 +52,13 @@ extension Response {
         headers[.contentType] = "application/json"
         let data = try JSONEncoder.whatFeature.encode(value)
         return Response(status: status, headers: headers, body: .init(byteBuffer: ByteBuffer(data: data)))
+    }
+}
+
+extension JSONValue {
+    /// Encodes `value` the way responses are encoded, then reads it back. For embedding a response body,
+    /// e.g. the exact OFREP JSON inside a dry run.
+    init(encoding value: some Encodable) throws {
+        self = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder.whatFeature.encode(value))
     }
 }

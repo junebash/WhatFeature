@@ -70,8 +70,20 @@ public struct DryRunRequest: Sendable, Codable {
     }
 }
 
+/// Exactly what an app would get from an OFREP endpoint: the HTTP status and the JSON body. The server
+/// builds it with the same code as the OFREP endpoints, so the two can't drift apart.
+public struct OFREPReply: Sendable, Codable, Hashable {
+    public var status: Int
+    public var body: JSONValue
+
+    public init(status: Int, body: JSONValue) {
+        self.status = status
+        self.body = body
+    }
+}
+
 /// Like an OFREP result, plus why: which rule matched (`nil` means the default) and which config version
-/// was used.
+/// was used. `ofrep` is exactly what an app would get from the single-flag endpoint.
 public struct DryRunResult: Sendable, Codable, Hashable {
     public var key: String
     public var reason: Reason
@@ -81,11 +93,13 @@ public struct DryRunResult: Sendable, Codable, Hashable {
     public var errorCode: EvaluationErrorCode?
     public var errorDetails: String?
     public var configVersion: Int
+    public var ofrep: OFREPReply
 
-    public init(_ result: EvaluationResult, configVersion: Int) {
+    public init(_ result: EvaluationResult, configVersion: Int, ofrep: OFREPReply) {
         key = result.flagKey
         reason = result.reason
         self.configVersion = configVersion
+        self.ofrep = ofrep
         switch result.outcome {
         case .resolved(let value, let variant, _, let matchedRule):
             self.value = value
@@ -97,6 +111,18 @@ public struct DryRunResult: Sendable, Codable, Hashable {
             errorCode = code
             errorDetails = details
         }
+    }
+}
+
+/// Every flag in an environment, as the bulk OFREP endpoint would see them (archived flags left out),
+/// sorted by key. `ofrep` is exactly what an app would get from the bulk endpoint.
+public struct BulkDryRunResult: Sendable, Codable, Hashable {
+    public var flags: [DryRunResult]
+    public var ofrep: OFREPReply
+
+    public init(flags: [DryRunResult], ofrep: OFREPReply) {
+        self.flags = flags
+        self.ofrep = ofrep
     }
 }
 

@@ -110,6 +110,11 @@ public struct AdminClient: Sendable {
         try await send(.POST, AdminPaths.evaluate(project, environment, flag), body: DryRunRequest(context: context))
     }
 
+    /// What `context` would get for every flag, as OFREP's bulk endpoint would answer. Stores nothing.
+    public func evaluateAll(project: String, environment: String, context: EvaluationContext) async throws -> BulkDryRunResult {
+        try await send(.POST, AdminPaths.evaluateAll(project, environment), body: DryRunRequest(context: context))
+    }
+
     // MARK: - Tokens
 
     public func tokens() async throws -> [Token] {

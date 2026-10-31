@@ -23,6 +23,10 @@ public enum AdminPaths {
     public static func evaluate(_ project: String, _ environment: String, _ flag: String) -> String {
         config(project, environment, flag) + "/evaluate"
     }
+    /// Every flag at once, like OFREP's bulk endpoint.
+    public static func evaluateAll(_ project: String, _ environment: String) -> String {
+        environments(project) + "/\(environment)/evaluate"
+    }
 
     public static let tokens = "tokens"
     public static func revokeToken(_ id: String) -> String { "tokens/\(id)/revoke" }
@@ -70,6 +74,9 @@ extension AdminPaths {
     }
     public static func evaluate(_ project: Parameter, _ environment: Parameter, _ flag: Parameter) -> String {
         evaluate(project.placeholder, environment.placeholder, flag.placeholder)
+    }
+    public static func evaluateAll(_ project: Parameter, _ environment: Parameter) -> String {
+        evaluateAll(project.placeholder, environment.placeholder)
     }
     public static func revokeToken(_ id: Parameter) -> String { revokeToken(id.placeholder) }
 }

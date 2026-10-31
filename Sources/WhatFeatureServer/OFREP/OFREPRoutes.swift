@@ -32,13 +32,8 @@ struct OFREPRoutes {
         }
 
         let snapshot = try await store.snapshot(for: environment)
-        let result = snapshot.evaluate(flagKey: key, context: evaluationContext)
-        let status: HTTPResponse.Status = switch result.outcome {
-        case .resolved, .disabled: .ok
-        case .error(.flagNotFound, _): .notFound
-        case .error: .badRequest
-        }
-        return try .json(OFREPEvaluation(result: result, flag: snapshot.entries[key]?.flag), status: status)
+        let evaluation = OFREPEvaluation(result: snapshot.evaluate(flagKey: key, context: evaluationContext), in: snapshot)
+        return try .json(evaluation, status: evaluation.status)
     }
 
     @Sendable func evaluateAll(_ request: Request, context: Context) async throws -> Response {
@@ -58,10 +53,7 @@ struct OFREPRoutes {
             return Response(status: .notModified, headers: [.eTag: etag])
         }
 
-        let flags = snapshot.evaluateAll(context: evaluationContext).map { result in
-            OFREPEvaluation(result: result, flag: snapshot.entries[result.flagKey]?.flag)
-        }
-        return try .json(OFREPBulkResponse(flags: flags), status: .ok, headers: [.eTag: etag])
+        return try .json(OFREPBulkResponse(snapshot.evaluateAll(context: evaluationContext), in: snapshot), status: .ok, headers: [.eTag: etag])
     }
 
     /// Unreadable JSON is `PARSE_ERROR`. Valid JSON with a bad or missing context is `INVALID_CONTEXT`.

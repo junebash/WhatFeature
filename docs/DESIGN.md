@@ -268,7 +268,8 @@ Auth: `Authorization: Bearer wf_admin_…` (or `X-API-Key`). A missing, unknown 
 | `DELETE` | `/projects/{project}/flags/{flag}` | | `204` |
 | `POST` | `/projects/{project}/flags/{flag}/archive`, `/unarchive` | | flag detail |
 | `GET` / `PUT` | `/projects/{project}/environments/{env}/flags/{flag}` | a whole `FlagConfig` | config, with its new `version` |
-| `POST` | `/projects/{project}/environments/{env}/flags/{flag}/evaluate` | `{context}` | **Dry run**: OFREP-style result plus `matchedRule` (missing means the default) and `configVersion`. Stores nothing. For "why did this user get that?" |
+| `POST` | `/projects/{project}/environments/{env}/flags/{flag}/evaluate` | `{context}` | **Dry run**: OFREP-style result plus `matchedRule` (missing means the default), `configVersion`, and `ofrep: {status, body}`, exactly what an app would get. Stores nothing. For "why did this user get that?" |
+| `POST` | `/projects/{project}/environments/{env}/evaluate` | `{context}` | **Dry run of every flag**, like the bulk endpoint (archived flags left out): `{flags: [dry run…], ofrep: {status, body}}` |
 | `GET` / `POST` | `/tokens` | `{name, kind: admin\|evaluation, project?, environment?}` | `{token, secret}`. The secret appears **only** in this response. Lists never show secrets or hashes. |
 | `POST` | `/tokens/{id}/revoke` | | token |
 | `GET` | `/audit` | `project=<key>`, `flag`, `actor`, `since` / `until` (ISO 8601), `limit` (1–1000, default 100) | entries, newest first, with `before`/`after` as JSON |
@@ -278,6 +279,8 @@ Auth: `Authorization: Bearer wf_admin_…` (or `X-API-Key`). A missing, unknown 
 Errors are `{"error": "…", "issues": ["…"]?}`: `400` for bad input (all validation problems at once, in `issues`), `404` for unknown keys, `409` for duplicate keys.
 
 Every admin write checks its input first (variant values match the flag type, rules reference real variants, rollout weights add up to 10,000), then writes the change and its audit entry in **one transaction**. Changing a flag's variants re-checks every environment's config, so a variant still in use can't be removed.
+
+**The dry run shows exactly what an app gets.** Its `ofrep` part is built by the same code as the OFREP endpoints (same evaluation call, same JSON encoder, same status), so it can't drift from them, and a test compares the two for every kind of result. It doesn't check an evaluation token: it answers for an environment, using your admin token.
 
 Not yet: renaming or deleting projects and environments, and protection against two people editing the same config at once (an `If-Match` on the config version would do it).
 
@@ -309,7 +312,7 @@ The one exception is `whatfeature db token …`, which works on the file directl
 | `config enable\|disable` | Flip `enabled`, keeping the rules. `disable` is the kill switch. |
 | `config serve <flag> <variant>` | Everyone gets one variant: clears rules, sets the default, enables |
 | `config rollout <flag> on=10 off=90` | Percentage split of the default (two decimals allowed), keeping rules, and enables |
-| `evaluate <flag>` | The dry run: what a context gets and why |
+| `evaluate <flag>` / `evaluate --all` | The dry run: what a context gets and why, for one flag or all of them. `--app-json` prints exactly the JSON an app would get, and nothing else. |
 | `tokens list\|create\|revoke` | Through the server |
 | `audit` | Filters: project, flag, actor, since, until, limit |
 | `db token create\|list\|revoke` | On the database file (bootstrap) |

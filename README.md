@@ -74,6 +74,16 @@ Ask what a particular user would get, and why:
 swift run whatfeature evaluate dark-mode -e dev --targeting-key user-123 --attr appVersion=3.1
 ```
 
+Or every flag at once, and exactly the JSON the app would get:
+
+```bash
+swift run whatfeature evaluate --all -e dev --targeting-key user-123
+```
+
+```bash
+swift run whatfeature evaluate --all -e dev --targeting-key user-123 --app-json
+```
+
 Turn it off (the kill switch):
 
 ```bash

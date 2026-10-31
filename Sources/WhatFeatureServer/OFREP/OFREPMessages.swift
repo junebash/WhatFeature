@@ -1,4 +1,6 @@
+import HTTPTypes
 import WhatFeatureCore
+import WhatFeatureStorage
 
 // The JSON shapes from OFREP's OpenAPI spec (service/openapi.yaml in open-feature/protocol).
 // Written by hand rather than generated: the spec's allOf/oneOf nesting generates awkward types,
@@ -19,6 +21,20 @@ struct OFREPEvaluation: Encodable {
     var result: EvaluationResult
     /// `nil` when the flag doesn't exist.
     var flag: Flag?
+
+    init(result: EvaluationResult, in snapshot: EnvironmentSnapshot) {
+        self.result = result
+        self.flag = snapshot.entries[result.flagKey]?.flag
+    }
+
+    /// The single-flag endpoint's status. (In the bulk response every result comes back with `200`.)
+    var status: HTTPResponse.Status {
+        switch result.outcome {
+        case .resolved, .disabled: .ok
+        case .error(.flagNotFound, _): .notFound
+        case .error: .badRequest
+        }
+    }
 
     private enum CodingKeys: String, CodingKey {
         case key, value, variant, reason, errorCode, errorDetails, metadata
@@ -61,6 +77,10 @@ struct OFREPFlagMetadata: Encodable {
 
 struct OFREPBulkResponse: Encodable {
     var flags: [OFREPEvaluation]
+
+    init(_ results: [EvaluationResult], in snapshot: EnvironmentSnapshot) {
+        flags = results.map { OFREPEvaluation(result: $0, in: snapshot) }
+    }
 }
 
 /// A failure that isn't about one particular flag, e.g. an unreadable request body.

@@ -275,11 +275,89 @@ extension JSONValue {
 
             let path = "/admin/v1/projects/demo/environments/dev/flags/beta/evaluate"
             let june = try await admin.expect(client, .post, path, #"{"context": {"targetingKey": "june"}}"#, status: .ok)
-            #expect(june == ["key": "beta", "value": true, "variant": "on", "reason": "TARGETING_MATCH", "matchedRule": 0, "configVersion": 2])
+            #expect(june == [
+                "key": "beta", "value": true, "variant": "on", "reason": "TARGETING_MATCH", "matchedRule": 0, "configVersion": 2,
+                "ofrep": ["status": 200, "body": ["key": "beta", "value": true, "variant": "on", "reason": "TARGETING_MATCH"]],
+            ])
 
             let someoneElse = try await admin.expect(client, .post, path, #"{"context": {"targetingKey": "sam"}}"#, status: .ok)
             #expect(someoneElse?["reason"] == "DEFAULT")
             #expect(someoneElse?["matchedRule"] == nil)
+        }
+    }
+}
+
+/// The dry run's `ofrep` must be exactly what the real OFREP endpoints send, for every kind of result.
+@Suite struct DryRunMatchesOFREPTests {
+    @Test func singleAndBulkMatch() async throws {
+        let admin = try await Admin.make()
+        try await buildApplication(store: admin.store).test(.router) { client in
+            try await admin.setUp(client)
+            // beta: an experiment with a rule. split: a rollout, so it fails without a targeting key.
+            // off: disabled. gone: archived, so the bulk endpoint leaves it out.
+            try await admin.expect(client, .patch, "/admin/v1/projects/demo/flags/beta", #"{"isExperiment": true}"#, status: .ok)
+            try await admin.expect(client, .put, "/admin/v1/projects/demo/environments/dev/flags/beta", """
+            {"enabled": true,
+             "rules": [{"conditions": [{"attribute": "country", "operator": "equals", "value": "US"}], "result": {"variant": "on"}}],
+             "defaultResult": {"variant": "off"}}
+            """, status: .ok)
+            for key in ["split", "off", "gone"] {
+                try await admin.expect(
+                    client, .post, "/admin/v1/projects/demo/flags",
+                    #"{"key": "\#(key)", "type": "boolean", "variants": {"on": true, "off": false}}"#, status: .created
+                )
+            }
+            try await admin.expect(client, .put, "/admin/v1/projects/demo/environments/dev/flags/split", """
+            {"enabled": true, "defaultResult": {"rollout": [{"variant": "on", "weight": 5000}, {"variant": "off", "weight": 5000}]}}
+            """, status: .ok)
+            try await admin.expect(client, .post, "/admin/v1/projects/demo/flags/gone/archive", status: .ok)
+
+            let created = try await admin.expect(
+                client, .post, "/admin/v1/tokens",
+                #"{"name": "iOS", "kind": "evaluation", "project": "demo", "environment": "dev"}"#, status: .created
+            )
+            let secret = try #require(created?["secret"]?.stringValue)
+
+            for context in [#"{"context": {"country": "US"}}"#, #"{"context": {"targetingKey": "u1", "country": "DE"}}"#] {
+                for key in ["beta", "split", "off", "gone"] {
+                    let dryRun = try await admin.expect(
+                        client, .post, "/admin/v1/projects/demo/environments/dev/flags/\(key)/evaluate", context, status: .ok
+                    )
+                    let app = try await admin.send(client, .post, "/ofrep/v1/evaluate/flags/\(key)", context, token: secret)
+                    #expect(dryRun?["ofrep"]?["status"] == .number(Double(app.status.code)), "\(key) \(context)")
+                    #expect(dryRun?["ofrep"]?["body"] == app.json, "\(key) \(context)")
+                }
+
+                let bulkDryRun = try await admin.expect(client, .post, "/admin/v1/projects/demo/environments/dev/evaluate", context, status: .ok)
+                let bulkApp = try await admin.send(client, .post, "/ofrep/v1/evaluate/flags", context, token: secret)
+                #expect(bulkDryRun?["ofrep"]?["status"] == 200)
+                #expect(bulkDryRun?["ofrep"]?["body"] == bulkApp.json, "\(context)")
+                #expect(bulkDryRun?["flags"]?.count == 3)
+            }
+
+            // Check the cases above really include an experiment and an error.
+            let us = try await admin.send(client, .post, "/ofrep/v1/evaluate/flags/beta", #"{"context": {"country": "US"}}"#, token: secret)
+            #expect(us.json?["metadata"] == ["experiment": true])
+            let noKey = try await admin.send(client, .post, "/ofrep/v1/evaluate/flags/split", #"{"context": {"country": "US"}}"#, token: secret)
+            #expect(noKey.status == .badRequest)
+        }
+    }
+
+    @Test func bulkDryRunExplainsEachFlag() async throws {
+        let admin = try await Admin.make()
+        try await buildApplication(store: admin.store).test(.router) { client in
+            try await admin.setUp(client)
+            try await admin.expect(client, .put, "/admin/v1/projects/demo/environments/dev/flags/beta", """
+            {"enabled": true,
+             "rules": [{"conditions": [{"attribute": "country", "operator": "equals", "value": "US"}], "result": {"variant": "on"}}],
+             "defaultResult": {"variant": "off"}}
+            """, status: .ok)
+            let reply = try await admin.expect(
+                client, .post, "/admin/v1/projects/demo/environments/dev/evaluate", #"{"context": {"country": "US"}}"#, status: .ok
+            )
+            #expect(reply?["flags"]?[0]?["matchedRule"] == 0)
+            #expect(reply?["flags"]?[0]?["configVersion"] == 2)
+            try await admin.expect(client, .post, "/admin/v1/projects/demo/environments/nope/evaluate", #"{"context": {}}"#, status: .notFound)
         }
     }
 }

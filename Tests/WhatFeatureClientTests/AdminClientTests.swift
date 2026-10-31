@@ -43,6 +43,11 @@ private func withLiveServer(_ test: @Sendable (AdminClient, SQLiteStore) async t
             let result = try await client.evaluate(project: "demo", environment: "dev", flag: "beta", context: EvaluationContext())
             #expect(result.value == true)
             #expect(result.reason == .static)
+            #expect(result.ofrep == OFREPReply(status: 200, body: ["key": "beta", "value": true, "variant": "on", "reason": "STATIC"]))
+
+            let all = try await client.evaluateAll(project: "demo", environment: "dev", context: EvaluationContext())
+            #expect(all.flags.map(\.key) == ["beta"])
+            #expect(all.ofrep.body == ["flags": [["key": "beta", "value": true, "variant": "on", "reason": "STATIC"]]])
 
             _ = try await client.updateFlag(project: "demo", key: "beta", changes: .init(description: "Beta features"))
             #expect(try await client.flag(project: "demo", key: "beta").flag.description == "Beta features")

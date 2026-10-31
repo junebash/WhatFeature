@@ -126,3 +126,48 @@ func printCreatedToken(_ token: Token, secret: String) {
         \(secret)
     """)
 }
+
+// MARK: - Dry runs
+
+/// The JSON exactly as the server sends it: sorted keys, compact.
+func appJSONString(_ value: JSONValue) -> String {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = .sortedKeys
+    return (try? String(decoding: encoder.encode(value), as: UTF8.self)) ?? "?"
+}
+
+func printDryRun(_ result: DryRunResult) {
+    if let value = result.value, let variant = result.variant {
+        let why = result.matchedRule.map { "rule \($0)" } ?? "the default"
+        print("\(variant) = \(compactJSON(value))")
+        print("Reason: \(result.reason.rawValue), from \(why) (config v\(result.configVersion))")
+    } else if let code = result.errorCode {
+        print("Error: \(code.rawValue): \(result.errorDetails ?? "")")
+        print("Apps would use their own default.")
+    } else {
+        print("Disabled: apps use their own default. (config v\(result.configVersion))")
+    }
+    print("App gets (HTTP \(result.ofrep.status)): \(appJSONString(result.ofrep.body))")
+}
+
+func printDryRuns(_ results: [DryRunResult]) {
+    if results.isEmpty {
+        print("No flags.")
+        return
+    }
+    printTable(
+        ["FLAG", "RESULT", "REASON", "WHY"],
+        results.map { result in
+            if let value = result.value, let variant = result.variant {
+                let why = result.matchedRule.map { "rule \($0)" } ?? "default"
+                return [result.key, "\(variant) = \(compactJSON(value))", result.reason.rawValue, "\(why), config v\(result.configVersion)"]
+            } else if let code = result.errorCode {
+                return [result.key, "error", code.rawValue, result.errorDetails ?? ""]
+            } else {
+                return [result.key, "disabled", result.reason.rawValue, "app uses its own default"]
+            }
+        }
+    )
+    print("")
+    print("--app-json shows exactly what an app gets.")
+}

@@ -36,6 +36,7 @@ struct AdminRoutes {
         group.get(path(Paths.config(.project, .environment, .flag)), use: getConfig)
         group.put(path(Paths.config(.project, .environment, .flag)), use: setConfig)
         group.post(path(Paths.evaluate(.project, .environment, .flag)), use: dryRun)
+        group.post(path(Paths.evaluateAll(.project, .environment)), use: dryRunAll)
 
         group.get(path(Paths.tokens), use: listTokens)
         group.post(path(Paths.tokens), use: createToken)
@@ -165,16 +166,36 @@ struct AdminRoutes {
         return try .json(saved, status: .ok)
     }
 
-    /// "What would this context get, and why?" Uses the live config and stores nothing.
+    /// "What would this context get, and why?" Uses the live config and stores nothing. Evaluates through
+    /// the same code as the OFREP endpoint, and includes exactly what an app would get from it.
     @Sendable func dryRun(_ request: Request, context: Context) async throws -> Response {
         let (_, environment, flag) = try await projectEnvironmentAndFlag(context)
         let body = try await request.decodeJSON(DryRunRequest.self)
         let snapshot = try await store.snapshot(for: environment.id)
-        guard let entry = snapshot.entries[flag.key] else {
+        guard snapshot.entries[flag.key] != nil else {
             throw StoreError.notFound("No config for '\(flag.key)' in '\(environment.key)'")
         }
-        let result = entry.evaluate(context: body.context)
-        return try .json(DryRunResult(result, configVersion: entry.config.version), status: .ok)
+        let result = snapshot.evaluate(flagKey: flag.key, context: body.context)
+        return try .json(try Self.dryRunResult(result, in: snapshot), status: .ok)
+    }
+
+    /// The dry run for every flag at once: what OFREP's bulk endpoint would send.
+    @Sendable func dryRunAll(_ request: Request, context: Context) async throws -> Response {
+        let (_, environment) = try await projectAndEnvironment(context)
+        let body = try await request.decodeJSON(DryRunRequest.self)
+        let snapshot = try await store.snapshot(for: environment.id)
+        let results = snapshot.evaluateAll(context: body.context)
+        let bulk = OFREPReply(status: 200, body: try JSONValue(encoding: OFREPBulkResponse(results, in: snapshot)))
+        return try .json(BulkDryRunResult(flags: try results.map { try Self.dryRunResult($0, in: snapshot) }, ofrep: bulk), status: .ok)
+    }
+
+    private static func dryRunResult(_ result: EvaluationResult, in snapshot: EnvironmentSnapshot) throws -> DryRunResult {
+        let evaluation = OFREPEvaluation(result: result, in: snapshot)
+        return DryRunResult(
+            result,
+            configVersion: snapshot.entries[result.flagKey]?.config.version ?? 0,
+            ofrep: OFREPReply(status: Int(evaluation.status.code), body: try JSONValue(encoding: evaluation))
+        )
     }
 
     // MARK: - Tokens
@@ -263,12 +284,17 @@ struct AdminRoutes {
         return flag
     }
 
-    private func projectEnvironmentAndFlag(_ context: Context) async throws -> (Project, WhatFeatureStorage.Environment, Flag) {
+    private func projectAndEnvironment(_ context: Context) async throws -> (Project, WhatFeatureStorage.Environment) {
         let project = try await project(context)
         let key = try context.parameters.require(AdminPaths.Parameter.environment.rawValue)
         guard let environment = try await store.environment(key: key, in: project.id) else {
             throw StoreError.notFound("No environment '\(key)' in '\(project.key)'")
         }
+        return (project, environment)
+    }
+
+    private func projectEnvironmentAndFlag(_ context: Context) async throws -> (Project, WhatFeatureStorage.Environment, Flag) {
+        let (project, environment) = try await projectAndEnvironment(context)
         return (project, environment, try await flag(context, in: project))
     }
 

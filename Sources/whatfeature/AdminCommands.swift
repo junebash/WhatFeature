@@ -457,8 +457,10 @@ struct Evaluate: AsyncParsableCommand {
         abstract: "Show what a user or device would get, and why. Stores nothing.",
         discussion: """
         e.g. whatfeature evaluate dark-mode -e prod --targeting-key user-123 --attr appVersion=3.1
+             whatfeature evaluate --all -e prod --targeting-key user-123
         --attr values are always strings (so app versions stay versions). Use --attr-json for numbers,
         booleans or objects, e.g. --attr-json age=30.
+        --app-json prints exactly the JSON an app would get from the OFREP endpoint, and nothing else.
         """
     )
 
@@ -466,30 +468,44 @@ struct Evaluate: AsyncParsableCommand {
     @OptionGroup var project: ProjectOption
     @OptionGroup var environment: EnvironmentOption
     @OptionGroup var output: OutputOptions
-    @Argument(help: "Flag key.") var flag: String
+    @Argument(help: "Flag key. Leave out with --all.") var flag: String?
+    @Flag(help: "Every flag at once, as the app's bulk request would get them.") var all = false
+    @Flag(help: "Print exactly the JSON an app would get, and nothing else.") var appJSON = false
     @Option(help: "The targeting key (user or device ID).") var targetingKey: String?
     @Option(name: .customLong("attr"), help: "A string attribute, name=value. Repeat for more.") var attributes: [String] = []
     @Option(name: .customLong("attr-json"), help: "A JSON attribute, name=value. Repeat for more.") var jsonAttributes: [String] = []
     @Option(help: "The whole context as a JSON object. --targeting-key and --attr are added on top.") var context: String?
 
+    func validate() throws {
+        switch (flag, all) {
+        case (nil, false): throw ValidationError("Give a flag key, or --all for every flag.")
+        case (.some, true): throw ValidationError("Give a flag key or --all, not both.")
+        default: break
+        }
+        if appJSON, output.json { throw ValidationError("Use --json or --app-json, not both.") }
+    }
+
     func run() async throws {
         let projectKey = try project.resolve()
         let evaluationContext = try buildContext(json: context, targetingKey: targetingKey, attributes: attributes, jsonAttributes: jsonAttributes)
-        let result = try await withServer(try connection.makeClient()) {
+        let client = try connection.makeClient()
+
+        guard let flag else {
+            let results = try await withServer(client) {
+                try await $0.evaluateAll(project: projectKey, environment: environment.environment, context: evaluationContext)
+            }
+            if appJSON { return print(appJSONString(results.ofrep.body)) }
+            if output.json { return try printJSON(results) }
+            printDryRuns(results.flags)
+            return
+        }
+
+        let result = try await withServer(client) {
             try await $0.evaluate(project: projectKey, environment: environment.environment, flag: flag, context: evaluationContext)
         }
+        if appJSON { return print(appJSONString(result.ofrep.body)) }
         if output.json { return try printJSON(result) }
-
-        if let value = result.value, let variant = result.variant {
-            let why = result.matchedRule.map { "rule \($0)" } ?? "the default"
-            print("\(variant) = \(compactJSON(value))")
-            print("Reason: \(result.reason.rawValue), from \(why) (config v\(result.configVersion))")
-        } else if let code = result.errorCode {
-            print("Error: \(code.rawValue): \(result.errorDetails ?? "")")
-            print("Apps would use their own default.")
-        } else {
-            print("Disabled: apps use their own default. (config v\(result.configVersion))")
-        }
+        printDryRun(result)
     }
 }
 
