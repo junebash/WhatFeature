@@ -20,17 +20,17 @@ It is also a learning project: the point is to understand how a flag service wor
 | Topic | Decision |
 |---|---|
 | Language / framework | Swift 6, Hummingbird 2 (latest) |
-| Evaluation API | OFREP, generated from its OpenAPI spec with `swift-openapi-generator` |
+| Evaluation API | OFREP 0.4, with the JSON written by hand (see below for why) |
 | Admin API | Our own REST API (OpenFeature doesn't define one) |
 | Where rules run | Server only. Clients hold resolved values. |
-| Storage | SQLite behind a `FlagStore` protocol, so Postgres can replace it later. One database for everything. |
+| Storage | SQLite behind a store protocol, so Postgres can replace it later. One database for everything. Until then, an in-memory store loaded from a seed file. |
 | Tenancy | Projects, each with environments (e.g. `dev`, `prod`) |
 | Flag types | boolean, string, number, object, with named variants |
 | Targeting | Small custom rule model, built to be extended |
 | Rollouts | Sticky percentage splits using a stable hash of the targeting key |
 | Auth | Revocable, scoped bearer tokens for both admin and evaluation |
 | Audit log | Yes, from v1 |
-| Change updates | v1: ETag on bulk evaluation. v1.1: SSE "config changed" events |
+| Change updates | v1: ETag on bulk evaluation. v1.1: SSE `refetchEvaluation` events, as OFREP defines them |
 | Evaluation contexts | Never stored, never logged |
 | Deployment | Single container, config from env vars. Host not chosen yet. |
 | License | MIT |
@@ -66,9 +66,9 @@ Evaluation never touches the database. Each environment's flag config is held in
 | Target | Kind | Contents |
 |---|---|---|
 | `WhatFeatureCore` | library | Models, rule types, evaluation (`EnvironmentSnapshot.evaluate`), bucketing hash, validation. No networking, no database. Most tests live here. |
-| `WhatFeatureStorage` | library | `FlagStore` protocol and the SQLite implementation |
-| `WhatFeatureServer` | library | Hummingbird app, routes, middleware, OFREP generated code |
-| `whatfeature` | executable | CLI: `serve`, `token create`, `migrate` |
+| `WhatFeatureServer` | library | Hummingbird app, OFREP routes, token middleware, ETags. The `EvaluationStore` protocol and `InMemoryStore` (plus seed-file loading) live here for now. |
+| `WhatFeatureStorage` | library | *Not yet.* The SQLite store. |
+| `whatfeature` | executable | CLI. Today: `serve` (with `--seed`). Later: `token create`, `migrate`. |
 
 ## Data model
 
@@ -202,14 +202,30 @@ That gives a number from 0 to 9,999, in hundredths of a percent. Variants take r
 
 ### Evaluation (OFREP)
 
-Auth: `Authorization: Bearer wf_eval_…`. The token decides which project and environment are used.
+Auth: `Authorization: Bearer wf_eval_…` or `X-API-Key: wf_eval_…` (OFREP allows both). The token decides which environment is used. A missing or unknown token gets `401`.
 
 | Method | Path | Notes |
 |---|---|---|
 | `POST` | `/ofrep/v1/evaluate/flags/{key}` | Single flag. Body: `{ "context": { … } }` |
 | `POST` | `/ofrep/v1/evaluate/flags` | All non-archived flags in the environment. Supports `If-None-Match` → `304`. |
 
-Responses follow OFREP: `key`, `value`, `reason`, `variant`, `metadata`, or `errorCode` + `errorDetails`.
+Responses follow OFREP 0.4 (`service/openapi.yaml` in [open-feature/protocol](https://github.com/open-feature/protocol)):
+
+| Outcome | Status | Body |
+|---|---|---|
+| Resolved | `200` | `key`, `value`, `variant`, `reason` (`STATIC`, `TARGETING_MATCH`, `SPLIT`, `DEFAULT`) |
+| Disabled or archived | `200` | `key`, `reason: DISABLED`, **no `value`**. OFREP calls this a "code default" result: the app uses the default written in its code. |
+| Flag not found | `404` | `key`, `errorCode: FLAG_NOT_FOUND`, `errorDetails` |
+| Other error (e.g. `TARGETING_KEY_MISSING`) | `400` | `key`, `errorCode`, `errorDetails` |
+| Unreadable body | `400` | `errorCode: PARSE_ERROR` (or `INVALID_CONTEXT` for valid JSON with a bad context), plus `key` on the single-flag endpoint |
+
+In the bulk response, each flag is one of the first three shapes, sorted by key.
+
+Notes from reading the spec:
+
+- **`DEFAULT` isn't in the spec's list of reasons**, but OpenFeature defines it and OFREP's own ADR-0006 example uses it. It looks like an oversight in the spec, so we send it.
+- **There is no type in the request** (ADR-0003), so the server never returns `TYPE_MISMATCH`. The client SDK checks types.
+- The JSON is **written by hand, not generated** with `swift-openapi-generator`. The spec's `allOf`/`oneOf` nesting turns into awkward generated types (`value1.value1.variant`), a generated reason enum would refuse `DEFAULT`, and there are only two endpoints. Tests pin the exact JSON shapes.
 
 **ETag.** In flagd, the bulk ETag reflects only the flag config, so a client that changes its context must remember to drop its cached ETag. We avoid that trap by computing:
 
@@ -217,7 +233,9 @@ Responses follow OFREP: `key`, `value`, `reason`, `variant`, `metadata`, or `err
 ETag = hash(environment config version + canonical JSON of the context)
 ```
 
-A changed context or a changed flag produces a new ETag. We can answer `304` without evaluating anything.
+A changed context or a changed flag produces a new ETag. We can answer `304` without evaluating anything. `If-None-Match` accepts `*`, lists, and weak (`W/`) tags.
+
+The in-memory store starts its version counter at the current time in milliseconds, so a restarted server never reuses an old version (and its old ETags).
 
 ### Admin (`/admin/v1`)
 
@@ -286,7 +304,7 @@ Candidates to price out: Fly.io, Oracle Cloud's free tier, Google Cloud Run (nee
 | Version | Scope |
 |---|---|
 | **v1** | Everything above: OFREP single + bulk with ETag, admin API, rules, rollouts, A/B assignment (`isExperiment`), tokens, audit log, dry-run evaluate |
-| **v1.1** | SSE stream at `/ofrep/v1/events` (our own extension, not part of OFREP). It sends a small `configChanged` event with the new version. Clients re-fetch the bulk endpoint with their ETag. Requires our own client provider, or an extension to `swift-ofrep`. Experiment exposure tracking, lined up with OpenFeature's tracking API. |
+| **v1.1** | SSE, as OFREP defines it (ADR-0008): the bulk response gets an `eventStreams` entry pointing at our SSE endpoint, which sends `{"type": "refetchEvaluation", "etag": …}` when config changes. Clients re-fetch the bulk endpoint. No custom extension needed. Also experiment exposure tracking, lined up with OpenFeature's tracking API. |
 | **v1.5** | Support tooling: look up "what has this user been getting" and opt them into betas easily. Needs a careful decision about what gets stored (see Privacy). |
 | **later** | UI, scheduled flag changes, flag dependencies, admin roles, Postgres store, experiment analysis |
 
@@ -294,4 +312,9 @@ Candidates to price out: Fly.io, Oracle Cloud's free tier, Google Cloud Run (nee
 
 1. Hosting (see Deployment).
 2. SQLite library: GRDB (mature, works on Linux) or `sqlite-nio` (async, NIO-based). Leaning GRDB. To decide while scaffolding.
-3. Does `swift-ofrep` send a type hint with its requests? That decides whether `TYPE_MISMATCH` can be checked on the server or only in the client SDK.
+3. **Integer vs. float.** OFREP has separate integer and float value types; we have one `number`. `swift-ofrep` decodes a whole number like `1` as an integer, so asking it for a `Double` flag whose value happens to be whole may give a type mismatch. Options: split `number` into `integer` and `float` flag types, or accept the quirk. Not urgent until a number flag exists.
+
+## Clients
+
+- **Server-side Swift:** [`swift-ofrep`](https://github.com/swift-open-feature/swift-ofrep) (built on `swift-open-feature`) uses the single-flag endpoint.
+- **iOS / Apple platforms:** the OpenFeature Swift SDK ([open-feature/swift-sdk](https://github.com/open-feature/swift-sdk)) with an OFREP provider for static contexts. That provider uses the bulk endpoint. One exists in go-feature-flag's Swift provider; check whether it is usable on its own.

@@ -1,0 +1,19 @@
+public import Hummingbird
+import Logging
+
+/// Builds the HTTP app. Kept separate from `main` so tests can run it in memory.
+public func buildApplication(
+    store: some EvaluationStore,
+    configuration: ApplicationConfiguration = .init()
+) -> some ApplicationProtocol {
+    let router = Router(context: WhatFeatureRequestContext.self)
+    // Logs method and path only. Evaluation contexts are in the body, so they never reach the logs.
+    router.middlewares.add(LogRequestsMiddleware(.info))
+
+    router.get("health") { _, _ in "ok" }
+
+    let ofrep = router.group("ofrep/v1").add(middleware: EvaluationTokenMiddleware(store: store))
+    OFREPRoutes(store: store).register(on: ofrep)
+
+    return Application(router: router, configuration: configuration)
+}
