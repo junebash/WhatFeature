@@ -12,23 +12,41 @@ public import WhatFeatureCore
 public final class SQLiteStore: EvaluationStore {
     private let database: any DatabaseWriter
     private let now: @Sendable () -> Date
+    private let makeID: @Sendable () -> String
     private let snapshots = Mutex<[EnvironmentID: EnvironmentSnapshot]>([:])
     /// Token ID → the last `lastUsedAt` we wrote, so a busy token doesn't cause a write per request.
     private let tokenLastUsed = Mutex<[String: Date]>([:])
 
     /// Opens (or creates) a database file and brings its schema up to date.
-    public convenience init(path: String, now: @escaping @Sendable () -> Date = { Date() }) throws {
-        try self.init(database: DatabasePool(path: path), now: now)
+    ///
+    /// - Parameters:
+    ///   - now: The clock for timestamps (`createdAt`, `revokedAt`, audit entries, …).
+    ///   - makeID: Makes the ID of each new project, environment and token. Random UUIDs by default.
+    public convenience init(
+        path: String,
+        now: @escaping @Sendable () -> Date = { Date() },
+        makeID: @escaping @Sendable () -> String = randomID
+    ) throws {
+        try self.init(database: DatabasePool(path: path), now: now, makeID: makeID)
     }
 
     /// A database that lives only as long as this object. For tests and quick local runs.
-    public static func inMemory(now: @escaping @Sendable () -> Date = { Date() }) throws -> SQLiteStore {
-        try SQLiteStore(database: DatabaseQueue(), now: now)
+    public static func inMemory(
+        now: @escaping @Sendable () -> Date = { Date() },
+        makeID: @escaping @Sendable () -> String = randomID
+    ) throws -> SQLiteStore {
+        try SQLiteStore(database: DatabaseQueue(), now: now, makeID: makeID)
     }
 
-    private init(database: any DatabaseWriter, now: @escaping @Sendable () -> Date) throws {
+    /// A random, lowercase UUID: the default for new IDs.
+    @Sendable public static func randomID() -> String {
+        UUID().uuidString.lowercased()
+    }
+
+    private init(database: any DatabaseWriter, now: @escaping @Sendable () -> Date, makeID: @escaping @Sendable () -> String) throws {
         self.database = database
         self.now = now
+        self.makeID = makeID
         try Schema.migrator.migrate(database)
     }
 
@@ -36,7 +54,7 @@ public final class SQLiteStore: EvaluationStore {
 
     public func createProject(key: String, name: String, by actor: AuditActor) async throws -> Project {
         try Self.requireValidKey(key, kind: "Project")
-        let project = Project(id: ProjectID(Self.newID()), key: key, name: name, createdAt: now())
+        let project = Project(id: ProjectID(self.makeID()), key: key, name: name, createdAt: now())
         try await database.write { db in
             if try ProjectRecord.filter(Column("key") == key).fetchCount(db) > 0 {
                 throw StoreError.conflict("A project with key '\(key)' already exists")
@@ -65,7 +83,7 @@ public final class SQLiteStore: EvaluationStore {
     public func createEnvironment(key: String, name: String, in projectID: ProjectID, by actor: AuditActor) async throws -> Environment {
         try Self.requireValidKey(key, kind: "Environment")
         let environment = Environment(
-            id: EnvironmentID(Self.newID()), projectID: projectID, key: key, name: name, version: 1, createdAt: now()
+            id: EnvironmentID(self.makeID()), projectID: projectID, key: key, name: name, version: 1, createdAt: now()
         )
         try await database.write { db in
             try Self.requireProject(projectID, db)
@@ -329,7 +347,7 @@ public final class SQLiteStore: EvaluationStore {
         by actor: AuditActor
     ) async throws -> CreatedToken {
         let record = TokenRecord(
-            id: Self.newID(),
+            id: self.makeID(),
             hash: TokenHash.of(secret),
             kind: kind,
             scopes: [kind == .admin ? "admin" : "evaluate"],
@@ -500,10 +518,6 @@ public final class SQLiteStore: EvaluationStore {
     }
 
     // MARK: - Helpers
-
-    private static func newID() -> String {
-        UUID().uuidString.lowercased()
-    }
 
     private static func requireValidKey(_ key: String, kind: String) throws {
         guard Flag.isValidKey(key) else {

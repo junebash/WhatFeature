@@ -286,6 +286,30 @@ private func makeStore() async throws -> (SQLiteStore, Project, dev: Environment
     }
 }
 
+@Suite struct IDTests {
+    /// IDs come from the `makeID` the store was given, so tests can predict them.
+    @Test func newIDsComeFromMakeID() async throws {
+        let counter = Mutex(0)
+        let store = try SQLiteStore.inMemory(makeID: {
+            counter.withLock { count in
+                count += 1
+                return "id-\(count)"
+            }
+        })
+        let project = try await store.createProject(key: "demo", name: "Demo", by: me)
+        let environment = try await store.createEnvironment(key: "dev", name: "Dev", in: project.id, by: me)
+        let token = try await store.createAdminToken(name: "laptop", by: me).token
+        #expect([project.id.rawValue, environment.id.rawValue, token.id.rawValue] == ["id-1", "id-2", "id-3"])
+    }
+
+    @Test func randomIDsAreLowercaseUUIDs() {
+        let id = SQLiteStore.randomID()
+        #expect(UUID(uuidString: id) != nil)
+        #expect(id == id.lowercased())
+        #expect(SQLiteStore.randomID() != id)
+    }
+}
+
 /// A clock tests can move forward by hand.
 private final class TestClock: Sendable {
     private let current = Mutex(Date(timeIntervalSince1970: 1_700_000_000))
