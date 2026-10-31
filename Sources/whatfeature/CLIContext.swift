@@ -62,11 +62,19 @@ struct StandardTerminal: Terminal {
     var threadPool: NIOThreadPool
 
     func write(_ text: String) async throws {
-        try await threadPool.runIfActive { try FileHandle.standardOutput.write(contentsOf: Data(text.utf8)) }
+        try await Self.write(text, to: .standardOutput, threadPool: threadPool)
     }
 
     func writeError(_ text: String) async throws {
-        try await threadPool.runIfActive { try FileHandle.standardError.write(contentsOf: Data(text.utf8)) }
+        try await Self.write(text, to: .standardError, threadPool: threadPool)
+    }
+
+    private static func write(_ text: String, to handle: FileHandle, threadPool: NIOThreadPool) async throws {
+        do {
+            try await threadPool.runIfActive { try handle.write(contentsOf: Data(text.utf8)) }
+        } catch where isBrokenPipe(error) {
+            throw OutputClosed()
+        }
     }
 
     func readLine() async throws -> String? {
@@ -80,6 +88,20 @@ struct StandardTerminal: Terminal {
     var isInteractive: Bool {
         isatty(STDIN_FILENO) != 0
     }
+}
+
+/// Whoever was reading our output stopped, e.g. `whatfeature audit | head`. Not our failure: the command
+/// stops quietly.
+struct OutputClosed: Error {}
+
+/// Whether a write failed because the reader closed the pipe (EPIPE), however deeply Foundation wrapped it.
+func isBrokenPipe(_ error: any Error) -> Bool {
+    var current: NSError? = error as NSError
+    while let error = current {
+        if error.domain == NSPOSIXErrorDomain, error.code == Int(EPIPE) { return true }
+        current = error.userInfo[NSUnderlyingErrorKey] as? NSError
+    }
+    return false
 }
 
 /// Writes a line to standard output, through `CLIContext.current`. Use this instead of `print`.

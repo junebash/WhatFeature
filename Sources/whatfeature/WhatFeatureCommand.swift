@@ -4,6 +4,10 @@ import Foundation
 @main
 enum Main {
     static func main() async {
+        // A closed pipe (`whatfeature audit | head`) should come back as an error we can handle quietly, not kill
+        // the process. NIO ignores SIGPIPE once it starts, so without this, commands that never start NIO would
+        // die from the signal while the rest got an error: two behaviors for the same thing.
+        signal(SIGPIPE, SIG_IGN)
         exit(await runWhatFeature(Array(CommandLine.arguments.dropFirst())))
     }
 }
@@ -19,6 +23,9 @@ func runWhatFeature(_ arguments: [String]) async -> Int32 {
         } else {
             try command.run()
         }
+        return ExitCode.success.rawValue
+    } catch is OutputClosed {
+        // The reader went away (`whatfeature audit | head`). Stop quietly, like other command-line tools.
         return ExitCode.success.rawValue
     } catch {
         let code = WhatFeatureCommand.exitCode(for: error)

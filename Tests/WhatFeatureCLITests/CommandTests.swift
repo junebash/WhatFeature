@@ -197,3 +197,36 @@ private func withServer(_ test: @Sendable (Setup) async throws -> Void) async th
         }
     }
 }
+
+@Suite struct OutputClosedTests {
+    /// A terminal whose reader has gone away, like `whatfeature flags list | head` once `head` exits.
+    private struct ClosedTerminal: Terminal {
+        func write(_ text: String) async throws { throw OutputClosed() }
+        func writeError(_ text: String) async throws { throw OutputClosed() }
+        func readLine() async throws -> String? { nil }
+        func readAll() async throws -> Data { Data() }
+        var isInteractive: Bool { false }
+    }
+
+    @Test func stopsQuietly() async {
+        let context = CLIContext(
+            environment: [:],
+            settingsFile: FileManager.default.temporaryDirectory.appending(path: "unused-\(UUID().uuidString).json"),
+            terminal: ClosedTerminal(),
+            httpClient: .shared,
+            threadPool: .singleton
+        )
+        let status = await CLIContext.$current.withValue(context) { await runWhatFeature(["--help"]) }
+        #expect(status == 0)
+    }
+
+    /// Foundation reports EPIPE wrapped in a Cocoa error; it's found however deep it is.
+    @Test func recognizesBrokenPipe() {
+        let posix = NSError(domain: NSPOSIXErrorDomain, code: Int(EPIPE))
+        let wrapped = NSError(domain: NSCocoaErrorDomain, code: 512, userInfo: [NSUnderlyingErrorKey: posix])
+        #expect(isBrokenPipe(posix))
+        #expect(isBrokenPipe(wrapped))
+        #expect(!isBrokenPipe(NSError(domain: NSPOSIXErrorDomain, code: Int(ENOENT))))
+        #expect(!isBrokenPipe(CLIError("nope")))
+    }
+}
