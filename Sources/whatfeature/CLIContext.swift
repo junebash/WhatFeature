@@ -43,10 +43,10 @@ struct CLIContext: Sendable {
 
 /// Standard input, output and error.
 protocol Terminal: Sendable {
-    /// Writes to standard output. Synchronous, like `print`.
-    func write(_ text: String)
+    /// Writes to standard output.
+    func write(_ text: String) async throws
     /// Writes to standard error.
-    func writeError(_ text: String)
+    func writeError(_ text: String) async throws
     /// One line of standard input, without its newline, or `nil` at the end of input.
     func readLine() async throws -> String?
     /// All of standard input.
@@ -55,17 +55,18 @@ protocol Terminal: Sendable {
     var isInteractive: Bool { get }
 }
 
-/// The process's own standard input and output. Reads happen on a thread pool, so waiting for someone to type
-/// never blocks Swift concurrency's shared threads.
+/// The process's own standard input and output. Reads and writes happen on a thread pool, so waiting for
+/// someone to type, or for a slow reader of our output (`whatfeature audit --json | less`), never blocks Swift
+/// concurrency's shared threads.
 struct StandardTerminal: Terminal {
     var threadPool: NIOThreadPool
 
-    func write(_ text: String) {
-        FileHandle.standardOutput.write(Data(text.utf8))
+    func write(_ text: String) async throws {
+        try await threadPool.runIfActive { try FileHandle.standardOutput.write(contentsOf: Data(text.utf8)) }
     }
 
-    func writeError(_ text: String) {
-        FileHandle.standardError.write(Data(text.utf8))
+    func writeError(_ text: String) async throws {
+        try await threadPool.runIfActive { try FileHandle.standardError.write(contentsOf: Data(text.utf8)) }
     }
 
     func readLine() async throws -> String? {
@@ -82,6 +83,6 @@ struct StandardTerminal: Terminal {
 }
 
 /// Writes a line to standard output, through `CLIContext.current`. Use this instead of `print`.
-func writeLine(_ text: String = "", terminator: String = "\n") {
-    CLIContext.current.terminal.write(text + terminator)
+func writeLine(_ text: String = "", terminator: String = "\n") async throws {
+    try await CLIContext.current.terminal.write(text + terminator)
 }

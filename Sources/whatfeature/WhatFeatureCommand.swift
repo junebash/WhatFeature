@@ -25,9 +25,9 @@ func runWhatFeature(_ arguments: [String]) async -> Int32 {
         let message = WhatFeatureCommand.fullMessage(for: error)
         if !message.isEmpty {
             if code == .success {
-                terminal.write(message + "\n")
+                try? await terminal.write(message + "\n")
             } else {
-                terminal.writeError(message + "\n")
+                try? await terminal.writeError(message + "\n")
             }
         }
         return code.rawValue

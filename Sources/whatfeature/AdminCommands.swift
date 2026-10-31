@@ -26,7 +26,7 @@ struct Login: AsyncParsableCommand {
         let context = CLIContext.current
         var secret = token
         if secret == nil {
-            writeLine("Admin token:", terminator: " ")
+            try await writeLine("Admin token:", terminator: " ")
             secret = try await context.terminal.readLine()?.trimmingCharacters(in: .whitespaces)
         }
         guard let secret, !secret.isEmpty else { throw ValidationError("No token given.") }
@@ -37,8 +37,8 @@ struct Login: AsyncParsableCommand {
             _ = try await withServer(client) { try await $0.project(project) }
         }
         try await context.saveSettings(SavedSettings(url: url, token: secret, project: project))
-        writeLine("Logged in to \(url) as \(me.kind.rawValue) token \"\(me.name)\" (\(me.id)).")
-        if let project { writeLine("Default project: \(project)") }
+        try await writeLine("Logged in to \(url) as \(me.kind.rawValue) token \"\(me.name)\" (\(me.id)).")
+        if let project { try await writeLine("Default project: \(project)") }
     }
 }
 
@@ -56,9 +56,9 @@ struct Logout: AsyncParsableCommand {
     func run() async throws {
         let context = CLIContext.current
         if try await context.removeSettings() {
-            writeLine("Removed \(context.settingsFile.path).")
+            try await writeLine("Removed \(context.settingsFile.path).")
         } else {
-            writeLine("Not logged in.")
+            try await writeLine("Not logged in.")
         }
     }
 }
@@ -71,7 +71,7 @@ struct WhoAmI: AsyncParsableCommand {
     func run() async throws {
         let client = try await connection.makeClient()
         let me = try await withServer(client) { try await $0.me() }
-        writeLine("\(client.baseURL.absoluteString) as \(me.kind.rawValue) token \"\(me.name)\" (\(me.id))")
+        try await writeLine("\(client.baseURL.absoluteString) as \(me.kind.rawValue) token \"\(me.name)\" (\(me.id))")
     }
 }
 
@@ -91,9 +91,9 @@ struct ProjectsCommand: AsyncParsableCommand {
 
         func run() async throws {
             let projects = try await withServer(try await connection.makeClient()) { try await $0.projects() }
-            if output.json { return try printJSON(projects) }
-            if projects.isEmpty { return writeLine("No projects.") }
-            printTable(["KEY", "NAME", "CREATED"], projects.map { [$0.key, $0.name, format($0.createdAt)] })
+            if output.json { return try await printJSON(projects) }
+            if projects.isEmpty { return try await writeLine("No projects.") }
+            try await printTable(["KEY", "NAME", "CREATED"], projects.map { [$0.key, $0.name, format($0.createdAt)] })
         }
     }
 
@@ -107,9 +107,9 @@ struct ProjectsCommand: AsyncParsableCommand {
             let (project, environments) = try await withServer(client) { client in
                 (try await client.project(key), try await client.environments(project: key))
             }
-            if output.json { return try printJSON(project) }
-            writeLine("\(project.key): \(project.name)")
-            writeLine("Environments: " + (environments.isEmpty ? "none" : environments.map(\.key).joined(separator: ", ")))
+            if output.json { return try await printJSON(project) }
+            try await writeLine("\(project.key): \(project.name)")
+            try await writeLine("Environments: " + (environments.isEmpty ? "none" : environments.map(\.key).joined(separator: ", ")))
         }
     }
 
@@ -121,8 +121,8 @@ struct ProjectsCommand: AsyncParsableCommand {
 
         func run() async throws {
             let project = try await withServer(try await connection.makeClient()) { try await $0.createProject(key: key, name: name) }
-            if output.json { return try printJSON(project) }
-            writeLine("Created project \(project.key). Next: `whatfeature environments create dev -p \(project.key)`")
+            if output.json { return try await printJSON(project) }
+            try await writeLine("Created project \(project.key). Next: `whatfeature environments create dev -p \(project.key)`")
         }
     }
 }
@@ -146,9 +146,9 @@ struct EnvironmentsCommand: AsyncParsableCommand {
         func run() async throws {
             let projectKey = try await project.resolve()
             let environments = try await withServer(try await connection.makeClient()) { try await $0.environments(project: projectKey) }
-            if output.json { return try printJSON(environments) }
-            if environments.isEmpty { return writeLine("No environments in \(projectKey).") }
-            printTable(["KEY", "NAME", "VERSION", "CREATED"], environments.map { [$0.key, $0.name, "v\($0.version)", format($0.createdAt)] })
+            if output.json { return try await printJSON(environments) }
+            if environments.isEmpty { return try await writeLine("No environments in \(projectKey).") }
+            try await printTable(["KEY", "NAME", "VERSION", "CREATED"], environments.map { [$0.key, $0.name, "v\($0.version)", format($0.createdAt)] })
         }
     }
 
@@ -166,8 +166,8 @@ struct EnvironmentsCommand: AsyncParsableCommand {
             let environment = try await withServer(try await connection.makeClient()) {
                 try await $0.createEnvironment(project: projectKey, key: key, name: name)
             }
-            if output.json { return try printJSON(environment) }
-            writeLine("Created environment \(environment.key) in \(projectKey).")
+            if output.json { return try await printJSON(environment) }
+            try await writeLine("Created environment \(environment.key) in \(projectKey).")
         }
     }
 }
@@ -196,8 +196,8 @@ struct FlagsCommand: AsyncParsableCommand {
             let flags = try await withServer(try await connection.makeClient()) {
                 try await $0.flags(project: projectKey, includeArchived: archived, createdBy: createdBy, sort: sort, descending: desc)
             }
-            if output.json { return try printJSON(flags) }
-            printFlags(flags)
+            if output.json { return try await printJSON(flags) }
+            try await printFlags(flags)
         }
     }
 
@@ -212,8 +212,8 @@ struct FlagsCommand: AsyncParsableCommand {
         func run() async throws {
             let projectKey = try await project.resolve()
             let detail = try await withServer(try await connection.makeClient()) { try await $0.flag(project: projectKey, key: key) }
-            if output.json { return try printJSON(detail) }
-            printFlagDetail(detail)
+            if output.json { return try await printJSON(detail) }
+            try await printFlagDetail(detail)
         }
     }
 
@@ -249,8 +249,8 @@ struct FlagsCommand: AsyncParsableCommand {
                 key: key, type: type, variants: parsed, description: description, isExperiment: experiment, defaultVariant: defaultVariant
             )
             let detail = try await withServer(try await connection.makeClient()) { try await $0.createFlag(project: projectKey, request) }
-            if output.json { return try printJSON(detail) }
-            printFlagDetail(detail)
+            if output.json { return try await printJSON(detail) }
+            try await printFlagDetail(detail)
         }
     }
 
@@ -280,8 +280,8 @@ struct FlagsCommand: AsyncParsableCommand {
                 throw ValidationError("Nothing to change. Pass --description, --variant, or --experiment / --no-experiment.")
             }
             let detail = try await withServer(client) { try await $0.updateFlag(project: projectKey, key: key, changes: changes) }
-            if output.json { return try printJSON(detail) }
-            printFlagDetail(detail)
+            if output.json { return try await printJSON(detail) }
+            try await printFlagDetail(detail)
         }
     }
 
@@ -295,7 +295,7 @@ struct FlagsCommand: AsyncParsableCommand {
         func run() async throws {
             let projectKey = try await project.resolve()
             _ = try await withServer(try await connection.makeClient()) { try await $0.setArchived(true, project: projectKey, key: key) }
-            writeLine("Archived \(key). Apps now get their own default for it.")
+            try await writeLine("Archived \(key). Apps now get their own default for it.")
         }
     }
 
@@ -307,7 +307,7 @@ struct FlagsCommand: AsyncParsableCommand {
         func run() async throws {
             let projectKey = try await project.resolve()
             _ = try await withServer(try await connection.makeClient()) { try await $0.setArchived(false, project: projectKey, key: key) }
-            writeLine("Unarchived \(key). Its configs are as they were.")
+            try await writeLine("Unarchived \(key). Its configs are as they were.")
         }
     }
 
@@ -328,7 +328,7 @@ struct FlagsCommand: AsyncParsableCommand {
                 throw CLIError("Not deleted. (Pass --yes to skip the question.)")
             }
             try await withServer(try await connection.makeClient()) { try await $0.deleteFlag(project: projectKey, key: key) }
-            writeLine("Deleted \(key).")
+            try await writeLine("Deleted \(key).")
         }
     }
 }
@@ -359,7 +359,7 @@ struct ConfigCommand: AsyncParsableCommand {
             edit(&config)
             return try await client.setConfig(config, project: projectKey, environment: environment, flag: target.flag)
         }
-        writeLine("\(target.flag) in \(environment): \(saved.enabled ? "enabled" : "disabled"), \(summary(of: saved)) (v\(saved.version))")
+        try await writeLine("\(target.flag) in \(environment): \(saved.enabled ? "enabled" : "disabled"), \(summary(of: saved)) (v\(saved.version))")
     }
 
     struct Show: AsyncParsableCommand {
@@ -371,8 +371,8 @@ struct ConfigCommand: AsyncParsableCommand {
             let config = try await withServer(try target.connection.makeClient()) {
                 try await $0.config(project: projectKey, environment: target.environment.environment, flag: target.flag)
             }
-            if output.json { return try printJSON(config) }
-            try printConfig(config, environment: target.environment.environment, flag: target.flag)
+            if output.json { return try await printJSON(config) }
+            try await printConfig(config, environment: target.environment.environment, flag: target.flag)
         }
     }
 
@@ -500,18 +500,18 @@ struct Evaluate: AsyncParsableCommand {
             let results = try await withServer(client) {
                 try await $0.evaluateAll(project: projectKey, environment: environment.environment, context: evaluationContext)
             }
-            if appJSON { return writeLine(appJSONString(results.ofrep.body)) }
-            if output.json { return try printJSON(results) }
-            printDryRuns(results.flags)
+            if appJSON { return try await writeLine(appJSONString(results.ofrep.body)) }
+            if output.json { return try await printJSON(results) }
+            try await printDryRuns(results.flags)
             return
         }
 
         let result = try await withServer(client) {
             try await $0.evaluate(project: projectKey, environment: environment.environment, flag: flag, context: evaluationContext)
         }
-        if appJSON { return writeLine(appJSONString(result.ofrep.body)) }
-        if output.json { return try printJSON(result) }
-        printDryRun(result)
+        if appJSON { return try await writeLine(appJSONString(result.ofrep.body)) }
+        if output.json { return try await printJSON(result) }
+        try await printDryRun(result)
     }
 }
 
@@ -531,8 +531,8 @@ struct TokensCommand: AsyncParsableCommand {
 
         func run() async throws {
             let tokens = try await withServer(try await connection.makeClient()) { try await $0.tokens() }
-            if output.json { return try printJSON(tokens) }
-            printTokens(tokens)
+            if output.json { return try await printJSON(tokens) }
+            try await printTokens(tokens)
         }
     }
 
@@ -560,8 +560,8 @@ struct TokensCommand: AsyncParsableCommand {
                 request = CreateTokenRequest(name: name, kind: .evaluation, project: projectKey, environment: environment)
             }
             let created = try await withServer(try await connection.makeClient()) { try await $0.createToken(request) }
-            if output.json { return try printJSON(created) }
-            printCreatedToken(created.token, secret: created.secret)
+            if output.json { return try await printJSON(created) }
+            try await printCreatedToken(created.token, secret: created.secret)
         }
     }
 
@@ -573,7 +573,7 @@ struct TokensCommand: AsyncParsableCommand {
 
         func run() async throws {
             let token = try await withServer(try await connection.makeClient()) { try await $0.revokeToken(TokenID(id)) }
-            writeLine("Revoked \(token.kind.rawValue) token \(token.id) (\"\(token.name)\").")
+            try await writeLine("Revoked \(token.kind.rawValue) token \(token.id) (\"\(token.name)\").")
         }
     }
 }
@@ -615,9 +615,9 @@ struct AuditCommand: AsyncParsableCommand {
         let entries = try await withServer(try await connection.makeClient()) {
             try await $0.audit(project: project, flag: flag, actor: actor, since: sinceDate, until: untilDate, limit: limit)
         }
-        if output.json { return try printJSON(entries) }
-        if entries.isEmpty { return writeLine("No audit entries.") }
-        printTable(
+        if output.json { return try await printJSON(entries) }
+        if entries.isEmpty { return try await writeLine("No audit entries.") }
+        try await printTable(
             ["TIME", "ACTOR", "ACTION", "FLAG"],
             entries.map { [format($0.timestamp), $0.actor, $0.action, $0.flagKey ?? ""] }
         )

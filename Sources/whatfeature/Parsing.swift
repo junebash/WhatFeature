@@ -111,7 +111,7 @@ func readInput(_ path: String) async throws -> Data {
 func confirm(_ question: String, expecting answer: String) async throws -> Bool {
     let terminal = CLIContext.current.terminal
     guard terminal.isInteractive else { return false }
-    writeLine(question, terminator: " ")
+    try await writeLine(question, terminator: " ")
     return try await terminal.readLine()?.trimmingCharacters(in: .whitespaces) == answer
 }
 

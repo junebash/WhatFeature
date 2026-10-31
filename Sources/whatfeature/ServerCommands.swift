@@ -122,7 +122,7 @@ struct DatabaseCommand: AsyncParsableCommand {
                 } else {
                     return
                 }
-                printCreatedToken(created.token, secret: created.secret)
+                try await printCreatedToken(created.token, secret: created.secret)
             }
         }
 
@@ -132,7 +132,7 @@ struct DatabaseCommand: AsyncParsableCommand {
             @OptionGroup var database: DatabaseOptions
 
             func run() async throws {
-                printTokens(try await database.open().tokens())
+                try await printTokens(try await database.open().tokens())
             }
         }
 
@@ -146,7 +146,7 @@ struct DatabaseCommand: AsyncParsableCommand {
 
             func run() async throws {
                 let token = try await database.open().revokeToken(TokenID(id), by: .system("cli"))
-                writeLine("Revoked \(token.kind.rawValue) token \(token.id) (\"\(token.name)\").")
+                try await writeLine("Revoked \(token.kind.rawValue) token \(token.id) (\"\(token.name)\").")
             }
         }
     }
