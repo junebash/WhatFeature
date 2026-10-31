@@ -97,7 +97,9 @@ let package = Package(
                 "WhatFeatureServer",
                 "WhatFeatureStorage",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
+                .product(name: "AsyncHTTPClient", package: "async-http-client"),
                 .product(name: "Hummingbird", package: "hummingbird"),
+                .product(name: "NIOPosix", package: "swift-nio"),
             ],
             swiftSettings: swiftSettings
         ),
@@ -115,6 +117,7 @@ let package = Package(
             name: "WhatFeatureClientTests",
             dependencies: [
                 "WhatFeatureClient",
+                .product(name: "AsyncHTTPClient", package: "async-http-client"),
                 "WhatFeatureCore",
                 "WhatFeatureServer",
                 "WhatFeatureStorage",
@@ -124,7 +127,15 @@ let package = Package(
         ),
         .testTarget(
             name: "WhatFeatureCLITests",
-            dependencies: ["whatfeature", "WhatFeatureCore", "WhatFeatureServer"],
+            dependencies: [
+                "whatfeature",
+                "WhatFeatureCore",
+                "WhatFeatureServer",
+                "WhatFeatureStorage",
+                .product(name: "AsyncHTTPClient", package: "async-http-client"),
+                .product(name: "HummingbirdTesting", package: "hummingbird"),
+                .product(name: "NIOPosix", package: "swift-nio"),
+            ],
             swiftSettings: swiftSettings
         ),
         .testTarget(

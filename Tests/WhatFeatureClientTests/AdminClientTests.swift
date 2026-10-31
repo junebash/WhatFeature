@@ -1,3 +1,4 @@
+import AsyncHTTPClient
 import Foundation
 import HummingbirdTesting
 import Testing
@@ -16,7 +17,7 @@ private func withLiveServer(_ test: @Sendable (AdminClient, SQLiteStore) async t
         // Hummingbird binds the live test server to "localhost", which can mean IPv6 (::1) on macOS, so
         // connect by name too. "127.0.0.1" works on Linux but is refused on macOS.
         let baseURL = try #require(URL(string: "http://localhost:\(port)"))
-        try await test(AdminClient(baseURL: baseURL, token: admin.secret), store)
+        try await test(AdminClient(baseURL: baseURL, token: admin.secret, httpClient: .shared), store)
     }
 }
 

@@ -13,7 +13,7 @@ func printJSON(_ value: some Encodable) throws {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
     encoder.dateEncodingStrategy = .iso8601
-    print(String(decoding: try encoder.encode(value), as: UTF8.self))
+    writeLine(String(decoding: try encoder.encode(value), as: UTF8.self))
 }
 
 /// Columns padded to the widest value. The last column isn't padded.
@@ -24,7 +24,7 @@ func printTable(_ headers: [String], _ rows: [[String]]) {
         let cells = row.enumerated().map { index, cell in
             index == row.count - 1 ? cell : cell.padding(toLength: widths[index], withPad: " ", startingAt: 0)
         }
-        print(cells.joined(separator: "  "))
+        writeLine(cells.joined(separator: "  "))
     }
 }
 
@@ -42,7 +42,7 @@ func compactJSON(_ value: JSONValue) -> String {
 
 func printFlags(_ flags: [WhatFeatureCore.Flag]) {
     if flags.isEmpty {
-        print("No flags.")
+        writeLine("No flags.")
         return
     }
     printTable(
@@ -56,11 +56,11 @@ func printFlagDetail(_ detail: FlagDetail) {
     var title = "\(flag.key) (\(flag.type.rawValue))"
     if flag.isExperiment { title += " · experiment" }
     if flag.isArchived { title += " · archived" }
-    print(title)
-    if !flag.description.isEmpty { print(flag.description) }
-    print("Variants: " + flag.variants.sorted { $0.key < $1.key }.map { "\($0.key)=\(compactJSON($0.value))" }.joined(separator: ", "))
-    print("Created \(format(flag.createdAt)) by \(flag.createdBy)")
-    print("")
+    writeLine(title)
+    if !flag.description.isEmpty { writeLine(flag.description) }
+    writeLine("Variants: " + flag.variants.sorted { $0.key < $1.key }.map { "\($0.key)=\(compactJSON($0.value))" }.joined(separator: ", "))
+    writeLine("Created \(format(flag.createdAt)) by \(flag.createdBy)")
+    writeLine("")
     printTable(
         ["ENVIRONMENT", "STATE", "VERSION", "BEHAVIOR"],
         detail.configs.sorted { $0.key < $1.key }.map { environment, config in
@@ -95,8 +95,8 @@ func percent(_ weight: Int) -> String {
 }
 
 func printConfig(_ config: FlagConfig, environment: String, flag: String) throws {
-    print("\(flag) in \(environment): \(config.enabled ? "enabled" : "disabled"), v\(config.version)")
-    print("")
+    writeLine("\(flag) in \(environment): \(config.enabled ? "enabled" : "disabled"), v\(config.version)")
+    writeLine("")
     try printJSON(config)
 }
 
@@ -104,7 +104,7 @@ func printConfig(_ config: FlagConfig, environment: String, flag: String) throws
 
 func printTokens(_ tokens: [Token]) {
     if tokens.isEmpty {
-        print("No tokens.")
+        writeLine("No tokens.")
         return
     }
     printTable(
@@ -119,7 +119,7 @@ func printTokens(_ tokens: [Token]) {
 }
 
 func printCreatedToken(_ token: Token, secret: String) {
-    print("""
+    writeLine("""
     Created \(token.kind.rawValue) token \(token.id) ("\(token.name)").
     Secret (save it now; it won't be shown again):
 
@@ -139,20 +139,20 @@ func appJSONString(_ value: JSONValue) -> String {
 func printDryRun(_ result: DryRunResult) {
     if let value = result.value, let variant = result.variant {
         let why = result.matchedRule.map { "rule \($0)" } ?? "the default"
-        print("\(variant) = \(compactJSON(value))")
-        print("Reason: \(result.reason.rawValue), from \(why) (config v\(result.configVersion))")
+        writeLine("\(variant) = \(compactJSON(value))")
+        writeLine("Reason: \(result.reason.rawValue), from \(why) (config v\(result.configVersion))")
     } else if let code = result.errorCode {
-        print("Error: \(code.rawValue): \(result.errorDetails ?? "")")
-        print("Apps would use their own default.")
+        writeLine("Error: \(code.rawValue): \(result.errorDetails ?? "")")
+        writeLine("Apps would use their own default.")
     } else {
-        print("Disabled: apps use their own default. (config v\(result.configVersion))")
+        writeLine("Disabled: apps use their own default. (config v\(result.configVersion))")
     }
-    print("App gets (HTTP \(result.ofrep.status)): \(appJSONString(result.ofrep.body))")
+    writeLine("App gets (HTTP \(result.ofrep.status)): \(appJSONString(result.ofrep.body))")
 }
 
 func printDryRuns(_ results: [DryRunResult]) {
     if results.isEmpty {
-        print("No flags.")
+        writeLine("No flags.")
         return
     }
     printTable(
@@ -168,6 +168,6 @@ func printDryRuns(_ results: [DryRunResult]) {
             }
         }
     )
-    print("")
-    print("--app-json shows exactly what an app gets.")
+    writeLine("")
+    writeLine("--app-json shows exactly what an app gets.")
 }

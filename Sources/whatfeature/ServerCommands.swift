@@ -1,15 +1,20 @@
 import ArgumentParser
 import Foundation
 import Hummingbird
+import NIOPosix
 import WhatFeatureServer
 import WhatFeatureStorage
 
 struct DatabaseOptions: ParsableArguments {
-    @Option(name: .customLong("database"), help: "SQLite file to use, or ':memory:' for a throwaway database. Env: DATABASE_PATH.")
-    var path: String = ProcessInfo.processInfo.environment["DATABASE_PATH"] ?? "whatfeature.sqlite"
+    @Option(
+        name: .customLong("database"),
+        help: "SQLite file to use, or ':memory:' for a throwaway database. Env: DATABASE_PATH. (default: whatfeature.sqlite)"
+    )
+    var path: String?
 
     func open() throws -> SQLiteStore {
-        path == ":memory:" ? try SQLiteStore.inMemory() : try SQLiteStore(path: path)
+        let path = path ?? CLIContext.current.environment["DATABASE_PATH"] ?? "whatfeature.sqlite"
+        return path == ":memory:" ? try SQLiteStore.inMemory() : try SQLiteStore(path: path)
     }
 }
 
@@ -18,11 +23,11 @@ struct Serve: AsyncParsableCommand {
 
     @OptionGroup var database: DatabaseOptions
 
-    @Option(help: "Address to listen on. Env: HOST.")
-    var host: String = ProcessInfo.processInfo.environment["HOST"] ?? "127.0.0.1"
+    @Option(help: "Address to listen on. Env: HOST. (default: 127.0.0.1)")
+    var host: String?
 
-    @Option(help: "Port to listen on. Env: PORT.")
-    var port: Int = ProcessInfo.processInfo.environment["PORT"].flatMap(Int.init) ?? 8080
+    @Option(help: "Port to listen on. Env: PORT. (default: 8080)")
+    var port: Int?
 
     @Option(help: "JSON file of projects, environments, tokens and flags to load at startup (development only). Env: SEED_FILE.")
     var seed: String?
@@ -31,14 +36,21 @@ struct Serve: AsyncParsableCommand {
     var adminRateLimit: String?
 
     func run() async throws {
+        let context = CLIContext.current
+        let host = host ?? context.environment["HOST"] ?? "127.0.0.1"
+        let port = try port ?? context.environment["PORT"].map { text in
+            guard let port = Int(text) else { throw ValidationError("PORT must be a number, not '\(text)'.") }
+            return port
+        } ?? 8080
         var rateLimit: RateLimit? = .adminDefault
-        if let text = adminRateLimit ?? ProcessInfo.processInfo.environment["RATE_LIMIT_ADMIN"] {
+        if let text = adminRateLimit ?? context.environment["RATE_LIMIT_ADMIN"] {
             rateLimit = try parseRateLimit(text)
         }
 
         let store = try database.open()
-        if let seedPath = seed ?? ProcessInfo.processInfo.environment["SEED_FILE"] {
-            try await store.load(Seed.read(from: URL(fileURLWithPath: seedPath)))
+        if let seedPath = seed ?? context.environment["SEED_FILE"] {
+            let seed = try await context.threadPool.runIfActive { try Seed.read(from: URL(fileURLWithPath: seedPath)) }
+            try await store.load(seed)
         }
         let app = buildApplication(
             store: store,
@@ -134,7 +146,7 @@ struct DatabaseCommand: AsyncParsableCommand {
 
             func run() async throws {
                 let token = try await database.open().revokeToken(TokenID(id), by: .system("cli"))
-                print("Revoked \(token.kind.rawValue) token \(token.id) (\"\(token.name)\").")
+                writeLine("Revoked \(token.kind.rawValue) token \(token.id) (\"\(token.name)\").")
             }
         }
     }

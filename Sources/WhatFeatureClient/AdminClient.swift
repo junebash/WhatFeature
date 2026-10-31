@@ -15,7 +15,7 @@ public struct AdminClient: Sendable {
     public var token: String
     private let http: HTTPClient
 
-    public init(baseURL: URL, token: String, httpClient: HTTPClient = .shared) {
+    public init(baseURL: URL, token: String, httpClient: HTTPClient) {
         self.baseURL = baseURL
         self.token = token
         self.http = httpClient

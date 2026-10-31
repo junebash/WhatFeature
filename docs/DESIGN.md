@@ -327,6 +327,8 @@ Every read command takes `--json`.
 
 Settings resolve flag → environment variable → `login` file: `--url` / `WHATFEATURE_URL`, `--token` / `WHATFEATURE_TOKEN`, `-p` / `WHATFEATURE_PROJECT`. `login` saves them to `$XDG_CONFIG_HOME/whatfeature/config.json` (else `~/.config/…`), created with `0600` permissions. If `login` gets no `--token`, it asks for one, so the secret stays out of shell history. (On macOS, the Keychain would be nicer; maybe later.)
 
+**Nothing global.** Commands get everything from outside through a `CLIContext`: environment variables, the settings file's location, the terminal (standard input, output and errors, and whether input is a terminal), the HTTP client, and a thread pool for blocking file and terminal reads. ArgumentParser builds the command structs, so there's nowhere to pass these as parameters; the context is a `@TaskLocal` instead. `main` uses `CLIContext.live`, the only place that touches `ProcessInfo`, the home directory, the real terminal or `HTTPClient.shared`. Tests run commands in-process with `runWhatFeature(arguments)` inside `CLIContext.$current.withValue(…)`, each with its own context, so tests running at the same time can't see each other's settings. A fake terminal can claim to be interactive, which is how the delete prompt gets tested.
+
 Parsing rules worth knowing:
 
 - **`--attr name=value` is always a string.** Otherwise `appVersion=2.0` would become the number 2.0 and silently stop matching semver rules. `--attr-json` is for typed values.

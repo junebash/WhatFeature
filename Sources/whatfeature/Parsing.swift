@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import NIOPosix
 import WhatFeatureServer
 import WhatFeatureCore
 
@@ -93,22 +94,25 @@ func buildContext(json: String?, targetingKey: String?, attributes: [String], js
 }
 
 /// Reads a whole file, or standard input for `-`.
-func readInput(_ path: String) throws -> Data {
+func readInput(_ path: String) async throws -> Data {
+    let context = CLIContext.current
     if path == "-" {
-        return FileHandle.standardInput.readDataToEndOfFile()
+        return try await context.terminal.readAll()
     }
     do {
-        return try Data(contentsOf: URL(fileURLWithPath: path))
+        return try await context.threadPool.runIfActive { try Data(contentsOf: URL(fileURLWithPath: path)) }
     } catch {
         throw ValidationError("Couldn't read \(path): \(error.localizedDescription)")
     }
 }
 
-/// Asks on the terminal. Returns `false` when there's no terminal to ask on.
-func confirm(_ question: String, expecting answer: String) -> Bool {
-    guard isatty(STDIN_FILENO) != 0 else { return false }
-    print(question, terminator: " ")
-    return readLine()?.trimmingCharacters(in: .whitespaces) == answer
+/// Asks on the terminal. Returns `false` when there's no terminal to ask on, so a script can't say yes by
+/// piping in the answer.
+func confirm(_ question: String, expecting answer: String) async throws -> Bool {
+    let terminal = CLIContext.current.terminal
+    guard terminal.isInteractive else { return false }
+    writeLine(question, terminator: " ")
+    return try await terminal.readLine()?.trimmingCharacters(in: .whitespaces) == answer
 }
 
 /// Requests per minute, or `off` for no limit.
