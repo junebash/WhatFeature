@@ -120,6 +120,12 @@ private final class FakeClock: Sendable {
         }
     }
 
+    /// Evaluation tokens are public and shared by every install, so by default only admin tokens are limited.
+    @Test func defaultLimitsOnlyAdminTokens() {
+        #expect(RateLimits.default.evaluation == nil)
+        #expect(RateLimits.default.admin == RateLimit(requestsPerMinute: 600))
+    }
+
     @Test func offMeansNoLimit() async throws {
         let store = try SQLiteStore.inMemory()
         let secret = try await store.createAdminToken(name: "test", by: .system("test")).secret

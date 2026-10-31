@@ -21,10 +21,13 @@ public struct RateLimits: Sendable, Hashable {
         self.admin = admin
     }
 
-    /// Generous: meant to stop runaway loops and abuse of a leaked token, not normal use.
-    /// One evaluation token is usually shared by every install of an app, so its limit is higher.
+    /// Admin tokens are secret and belong to one person, so a per-token limit fits them.
+    ///
+    /// Evaluation tokens have no limit by default. One is public and shared by every install of an app, so
+    /// a per-token limit would let one device (or anyone who pulls the token out of the app) get every
+    /// install a `429`. Limit those by client IP at the proxy instead. See "Rate limiting" in DESIGN.md.
     public static let `default` = RateLimits(
-        evaluation: RateLimit(requestsPerMinute: 6_000),
+        evaluation: nil,
         admin: RateLimit(requestsPerMinute: 600)
     )
 

@@ -27,7 +27,7 @@ struct Serve: AsyncParsableCommand {
     @Option(help: "JSON file of projects, environments, tokens and flags to load at startup (development only). Env: SEED_FILE.")
     var seed: String?
 
-    @Option(help: "Requests per minute for each evaluation token, or 'off'. Env: RATE_LIMIT_EVALUATION. (default: \(RateLimits.default.evaluation!.requestsPerMinute))")
+    @Option(help: "Requests per minute for each evaluation token, or 'off'. Env: RATE_LIMIT_EVALUATION. Off by default, because every install of an app shares one token. (default: off)")
     var evaluationRateLimit: String?
 
     @Option(help: "Requests per minute for each admin token, or 'off'. Env: RATE_LIMIT_ADMIN. (default: \(RateLimits.default.admin!.requestsPerMinute))")

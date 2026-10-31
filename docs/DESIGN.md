@@ -347,18 +347,29 @@ The exception is individual targeting (see Operators). There, an ID I chose to p
 
 ## Rate limiting
 
-An in-memory token bucket for each token. In-memory works because there is a single instance.
+**Admin tokens: limited per token. Evaluation tokens: not limited by the server.** This follows what the big flag services do.
 
-- **Limits are per minute, per token**, and the bucket holds one minute's worth. So `600` means up to 600 requests at once, then 10 a second.
-- **Defaults:** 6,000 a minute for each evaluation token, 600 for each admin token. They're meant to stop runaway loops and abuse of a leaked token, not normal use. Evaluation gets more because one evaluation token is usually shared by every install of an app.
-- **Settings:** `serve --evaluation-rate-limit` / `RATE_LIMIT_EVALUATION` and `--admin-rate-limit` / `RATE_LIMIT_ADMIN`. A whole number, or `off`.
+What they do (checked October 2026):
+
+- **The client key is public and harmless.** LaunchDarkly, Unleash, Flagsmith and ConfigCat all treat client keys as public: read-only, one project and environment. Ours are the same (see **Auth and tokens**).
+- **They don't throttle public keys one key at a time.** Flagsmith says its SDK endpoints aren't rate limited, only metered by plan, while its admin API is limited per user (that's from a preview build of their docs). ConfigCat serves client config from a CDN. Unleash points heavy client traffic at Unleash Edge, a proxy.
+- **The reason:** one public key is shared by every install. A limit on that key lets one buggy device, or anyone who pulls the key out of the app, get *every* install a `429`, and they all fall back to code defaults. That's worse than the load it saves. Our evaluation is cheap anyway: rules run in memory, and `304`s skip evaluation entirely.
+- **Abuse is handled elsewhere:** by client IP in a CDN or proxy in front of the server, by rotating a key that gets abused, and (for stronger protection) by app attestation such as Firebase App Check with Apple's App Attest.
+
+So:
+
+- **Admin tokens:** an in-memory token bucket per token, 600 requests a minute by default. The bucket holds one minute's worth, so that's up to 600 at once, then 10 a second. In-memory works because there is a single instance.
+- **Evaluation tokens:** no limit by default. **Per-IP limits belong in the proxy in front of the server** (e.g. Cloudflare rate-limiting rules if we use Cloudflare Tunnel). Decide when the host is chosen.
+- **An abused evaluation token:** revoke it and ship a new one (`whatfeature tokens revoke`).
+- **Opt-in per-token evaluation limit**, for emergencies or testing: `serve --evaluation-rate-limit` / `RATE_LIMIT_EVALUATION`. The admin limit is `--admin-rate-limit` / `RATE_LIMIT_ADMIN`. Each takes a whole number of requests a minute, or `off`.
+
+How a limit behaves when on:
+
 - **Checked after the token.** Only real tokens get a bucket (keyed by the token's hash), so made-up tokens can't fill memory. They get `401` as before.
 - **Over the limit → `429` with `Retry-After`.** Every request counts, including `304`s.
   - **OFREP:** `Retry-After` is an ISO 8601 date (`2024-02-07T12:00:00Z`), rounded up to the next second. That's what OFREP's spec shows, and `swift-ofrep` can't read plain seconds. No body, as the spec defines none.
   - **Admin:** `Retry-After` in whole seconds (the usual HTTP form), plus `{"error": "Too many requests. Try again in N seconds."}`.
 - Logged at `notice`, with the environment ID (evaluation) or token ID (admin). Never the secret.
-
-*Trade-off:* evaluation tokens are public, so anyone who pulls one out of the app can use up its limit, and every install then gets `429` and falls back to its code defaults until the bucket refills. Keying on token **plus client IP** would stop that, but behind a proxy the IP comes from `X-Forwarded-For`, and which proxy to trust depends on the host. Revisit once a host is chosen. Until then, the fix is to revoke the token and ship a new one.
 
 ## Deployment
 
@@ -382,7 +393,7 @@ Everything was built and tested on Linux with Swift 6.4.2. It hasn't been built 
 - **Admin API:** projects, environments, flags (create, update, archive, delete), per-environment configs, dry-run evaluation, tokens, audit log, `me`.
 - **CLI:** every admin task, through the admin API (see **CLI**), plus `db token` for bootstrapping.
 - **A/B assignment:** sticky rollouts, plus the `isExperiment` marker on flags.
-- **Rate limiting:** per-token buckets, `429` with `Retry-After` (see **Rate limiting**).
+- **Rate limiting:** per admin token, `429` with `Retry-After`. Evaluation tokens are left to a proxy, like the big flag services do (see **Rate limiting**).
 
 ### Left for v1
 
@@ -399,7 +410,7 @@ Everything was built and tested on Linux with Swift 6.4.2. It hasn't been built 
 - Environments created *after* a flag get the sorted-first variant as their default, even if the flag was created with `--default`.
 - The CLI keeps its admin token in a `0600` file. The macOS Keychain would be better there.
 - No regex operator (see **Operators**).
-- Requests without a valid token aren't rate limited, and anyone holding an evaluation token can use up its limit for everyone (see **Rate limiting**). Both want the client IP, which waits on the host.
+- Nothing limits evaluation requests, or requests without a valid token, until a proxy in front of the server limits by IP (see **Rate limiting**). That waits on the host.
 - Integer vs. float numbers (see **Open questions**).
 
 ### Later
@@ -408,7 +419,7 @@ Everything was built and tested on Linux with Swift 6.4.2. It hasn't been built 
 |---|---|
 | **v1.1** | SSE, as OFREP defines it (ADR-0008): the bulk response gets an `eventStreams` entry pointing at our SSE endpoint, which sends `{"type": "refetchEvaluation", "etag": …}` when config changes. Clients re-fetch the bulk endpoint. No custom extension needed. Also experiment exposure tracking, lined up with OpenFeature's tracking API. |
 | **v1.5** | Support tooling: look up "what has this user been getting" and opt them into betas easily. Needs a careful decision about what gets stored (see **Privacy**). |
-| **later** | UI, scheduled flag changes, flag dependencies, admin roles, Postgres store, experiment analysis |
+| **later** | App attestation (Apple's App Attest) for evaluation requests, UI, scheduled flag changes, flag dependencies, admin roles, Postgres store, experiment analysis |
 
 ## Open questions
 
