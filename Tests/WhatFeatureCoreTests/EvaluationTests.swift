@@ -152,4 +152,9 @@ import WhatFeatureCore
             WeightedVariant(variant: "on", weight: 1_000),
         ]))
     }
+
+    @Test func configJSONCanOmitRulesAndVersion() throws {
+        let config = try decode(FlagConfig.self, from: #"{"enabled": true, "defaultResult": {"variant": "on"}}"#)
+        #expect(config == FlagConfig(enabled: true, defaultResult: .variant("on"), version: 1))
+    }
 }

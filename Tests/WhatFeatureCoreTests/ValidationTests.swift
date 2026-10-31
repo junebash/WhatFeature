@@ -67,7 +67,7 @@ import WhatFeatureCore
     @Test func rejectsNullComparisonsAndEmptyAttributes() throws {
         let config = FlagConfig(
             enabled: true,
-            rules: [Rule(conditions: [Condition("country", .equals(nil)), Condition("", .exists)], result: .variant("on"))],
+            rules: [Rule(conditions: [Condition("country", .equals(.null)), Condition("", .exists)], result: .variant("on"))],
             defaultResult: .variant("off")
         )
         let error = try #require(throws: ValidationError.self) { try config.validate(for: .boolean()) }

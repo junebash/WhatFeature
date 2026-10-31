@@ -15,6 +15,21 @@ public struct FlagConfig: Sendable, Hashable, Codable {
         self.defaultResult = defaultResult
         self.version = version
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled, rules, defaultResult, version
+    }
+
+    /// `rules` and `version` are optional in JSON. The server assigns versions, so clients don't send one.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            enabled: try container.decode(Bool.self, forKey: .enabled),
+            rules: try container.decodeIfPresent([Rule].self, forKey: .rules) ?? [],
+            defaultResult: try container.decode(RuleResult.self, forKey: .defaultResult),
+            version: try container.decodeIfPresent(Int.self, forKey: .version) ?? 1
+        )
+    }
 }
 
 public struct Rule: Sendable, Hashable, Codable {

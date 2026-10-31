@@ -49,9 +49,8 @@ extension JSONValue: Codable {
     }
 }
 
-extension JSONValue: ExpressibleByNilLiteral {
-    public init(nilLiteral: ()) { self = .null }
-}
+// No ExpressibleByNilLiteral on purpose: with it, `nil` could quietly mean `.null` where an
+// `Optional<JSONValue>` was meant. Write `.null`.
 
 extension JSONValue: ExpressibleByBooleanLiteral {
     public init(booleanLiteral value: Bool) { self = .bool(value) }

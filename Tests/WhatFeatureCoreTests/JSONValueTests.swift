@@ -4,7 +4,7 @@ import WhatFeatureCore
 @Suite struct JSONValueTests {
     @Test func decodesEveryKind() throws {
         let value = try decode(JSONValue.self, from: #"{"a": null, "b": true, "c": 1.5, "d": "x", "e": [1, "y"], "f": {"g": false}}"#)
-        #expect(value == ["a": nil, "b": true, "c": 1.5, "d": "x", "e": [1, "y"], "f": ["g": false]])
+        #expect(value == ["a": .null, "b": true, "c": 1.5, "d": "x", "e": [1, "y"], "f": ["g": false]])
     }
 
     @Test func keepsBoolsAndNumbersApart() throws {
@@ -14,7 +14,7 @@ import WhatFeatureCore
     }
 
     @Test func roundTrips() throws {
-        let value: JSONValue = ["list": [1, 2.5, "three", nil], "nested": ["ok": true]]
+        let value: JSONValue = ["list": [1, 2.5, "three", .null], "nested": ["ok": true]]
         #expect(try roundTrip(value) == value)
     }
 }
@@ -42,7 +42,7 @@ import WhatFeatureCore
     }
 
     @Test func treatsNullAttributeAsMissing() {
-        let context = EvaluationContext(attributes: ["country": nil])
+        let context = EvaluationContext(attributes: ["country": .null])
         #expect(context.value(for: "country") == nil)
     }
 
