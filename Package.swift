@@ -30,9 +30,10 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-log.git", from: "1.6.0"),
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.0"),
         .package(url: "https://github.com/swift-server/async-http-client.git", from: "1.26.0"),
-        // Test only: a real OpenFeature client, to check apps can read our OFREP responses. Our fork adds the
-        // `headerFields:` option for sending a token, which upstream lacks. Upstream has no releases yet.
-        .package(path: "/home/user/forks/swift-ofrep"),
+        // Test only: a real OFREP client, to check apps can read our responses. Our fork of
+        // swift-open-feature/swift-ofrep adds `headerFields:` for sending a token, and fixes the build against
+        // current swift-open-feature. Neither has a release; Package.resolved pins the commits.
+        .package(url: "https://github.com/junebash/swift-ofrep.git", branch: "main"),
         .package(url: "https://github.com/swift-open-feature/swift-open-feature.git", branch: "main"),
     ],
     targets: [

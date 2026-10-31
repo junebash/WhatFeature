@@ -39,7 +39,7 @@ private let seed = """
 /// Runs the server on a free port and hands the test a provider pointed at it.
 private func withProvider(
     token: String? = token,
-    _ test: @Sendable (OFREPProvider<some OFREPClientTransport>) async throws -> Void
+    _ test: @Sendable (any OpenFeatureProvider) async throws -> Void
 ) async throws {
     let store = try SQLiteStore.inMemory()
     try await store.load(try JSONDecoder().decode(Seed.self, from: Data(seed.utf8)))
