@@ -402,7 +402,7 @@ CI (`.github/workflows/ci.yml`) runs `swift test` on every push to `main` and on
 
 ### Left for v1
 
-1. **Dockerfile.** Docker isn't available in the dev container, so it needs a first build on a Mac.
+1. **Dockerfile.** Docker isn't available in the dev container, so it needs a first build on a Mac. The official Swift images lack SQLite's headers: the build stage needs `libsqlite3-dev` (as in CI), the run stage `libsqlite3-0`.
 2. **Pick a host and deploy.** See **Deployment** and **Open questions**.
 3. **Try it on a Mac by hand.** CI builds and tests on macOS, but nobody has opened the package in Xcode or used the CLI from a Mac yet.
 

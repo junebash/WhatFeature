@@ -13,7 +13,9 @@ private func withLiveServer(_ test: @Sendable (AdminClient, SQLiteStore) async t
     let admin = try await store.createAdminToken(name: "test", by: .system("test"))
     try await buildApplication(store: store).test(.live) { client in
         let port = try #require(client.port)
-        let baseURL = try #require(URL(string: "http://127.0.0.1:\(port)"))
+        // Hummingbird binds the live test server to "localhost", which can mean IPv6 (::1) on macOS, so
+        // connect by name too. "127.0.0.1" works on Linux but is refused on macOS.
+        let baseURL = try #require(URL(string: "http://localhost:\(port)"))
         try await test(AdminClient(baseURL: baseURL, token: admin.secret), store)
     }
 }
