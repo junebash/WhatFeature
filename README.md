@@ -2,7 +2,7 @@
 
 A small feature flag service written in Swift. Flags are evaluated on the server and served over the [OpenFeature Remote Evaluation Protocol (OFREP)](https://github.com/open-feature/protocol), so any OpenFeature SDK with an OFREP provider can use it.
 
-Status: early. The OFREP endpoints, SQLite storage and token CLI work. There's no admin API yet, so flags come from a seed file. See [`docs/DESIGN.md`](docs/DESIGN.md).
+Status: early, but usable end to end: OFREP evaluation, an admin API, SQLite storage, tokens, and an audit log. No UI. See [`docs/DESIGN.md`](docs/DESIGN.md) for the design and the full admin API.
 
 ## Try it
 
@@ -34,13 +34,50 @@ curl -s -i -X POST localhost:8080/ofrep/v1/evaluate/flags \
   -d '{"context": {"targetingKey": "user-123", "appVersion": "2.1"}}'
 ```
 
-## Tokens
+## Manage flags
 
-Secrets are printed once and only their hashes are stored.
+Create an admin token once (it prints the secret):
 
 ```bash
 swift run whatfeature token create --admin --name "June's laptop"
 ```
+
+Then, with the server running (these examples use the seeded `demo` project) and the secret in `$ADMIN`:
+
+```bash
+curl -s -X POST localhost:8080/admin/v1/projects/demo/flags \
+  -H "Authorization: Bearer $ADMIN" \
+  -d '{"key": "dark-mode", "type": "boolean", "variants": {"on": true, "off": false}}'
+```
+
+New flags start disabled in every environment. Turn it on for 50% of users on app version 3.0 and up, in `dev`:
+
+```bash
+curl -s -X PUT localhost:8080/admin/v1/projects/demo/environments/dev/flags/dark-mode \
+  -H "Authorization: Bearer $ADMIN" \
+  -d '{"enabled": true,
+       "rules": [{"conditions": [{"attribute": "appVersion", "operator": "semverGte", "value": "3.0"}],
+                  "result": {"rollout": [{"variant": "on", "weight": 5000}, {"variant": "off", "weight": 5000}]}}],
+       "defaultResult": {"variant": "off"}}'
+```
+
+Ask what a particular user would get, and why (`matchedRule` is the index of the rule that applied):
+
+```bash
+curl -s -X POST localhost:8080/admin/v1/projects/demo/environments/dev/flags/dark-mode/evaluate \
+  -H "Authorization: Bearer $ADMIN" \
+  -d '{"context": {"targetingKey": "user-123", "appVersion": "3.1"}}'
+```
+
+See who changed what:
+
+```bash
+curl -s "localhost:8080/admin/v1/audit?project=demo&flag=dark-mode" -H "Authorization: Bearer $ADMIN"
+```
+
+## Tokens
+
+Secrets are printed once and only their hashes are stored. Besides `--admin`, the CLI can create evaluation tokens and list or revoke any token (the admin API's `/admin/v1/tokens` does the same):
 
 ```bash
 swift run whatfeature token create --name "iOS app" --project demo --environment dev

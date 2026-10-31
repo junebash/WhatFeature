@@ -164,6 +164,14 @@ private func makeStore() async throws -> (SQLiteStore, Project, dev: Environment
         #expect(try await store.tokens().first?.isRevoked == true)
     }
 
+    @Test func evaluationTokenChangesShowUpInTheProjectAuditLog() async throws {
+        let (store, project, dev, _) = try await makeStore()
+        let created = try await store.createEvaluationToken(name: "iOS", for: dev.id, by: me)
+        try await store.revokeToken(created.token.id, by: me)
+        let actions = try await store.auditEntries(projectID: project.id, limit: 2).map(\.action)
+        #expect(actions == ["token.revoke", "token.create"])
+    }
+
     @Test func secretsNeverReachTheDatabaseOrAuditLog() async throws {
         let (store, _, dev, _) = try await makeStore()
         let created = try await store.createEvaluationToken(name: "iOS", for: dev.id, by: me)

@@ -18,7 +18,7 @@ struct EvaluationTokenMiddleware: RouterMiddleware {
         context: Context,
         next: @concurrent (Request, Context) async throws -> Response
     ) async throws -> Response {
-        guard let secret = request.headers.evaluationToken,
+        guard let secret = request.headers.presentedToken,
               let environment = try await store.environment(forTokenHash: TokenHash.of(secret))
         else {
             return Response(status: .unauthorized, headers: [.wwwAuthenticate: "Bearer"])
@@ -34,7 +34,8 @@ extension HTTPField.Name {
 }
 
 extension HTTPFields {
-    var evaluationToken: String? {
+    /// `Authorization: Bearer <token>`, or else `X-API-Key: <token>`.
+    var presentedToken: String? {
         if let authorization = self[.authorization] {
             let parts = authorization.split(separator: " ", maxSplits: 1)
             if parts.count == 2, parts[0].lowercased() == "bearer" {

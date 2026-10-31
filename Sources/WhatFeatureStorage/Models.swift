@@ -1,21 +1,37 @@
 public import Foundation
 
-public struct ProjectID: Sendable, Hashable, Codable, CustomStringConvertible {
-    public var rawValue: String
-    public init(_ rawValue: String) { self.rawValue = rawValue }
+/// IDs are plain strings in JSON (`"3f2a…"`), not `{"rawValue": …}`.
+public protocol StringIdentifier: Sendable, Hashable, Codable, CustomStringConvertible {
+    var rawValue: String { get }
+    init(_ rawValue: String)
+}
+
+extension StringIdentifier {
+    public init(from decoder: any Decoder) throws {
+        self.init(try decoder.singleValueContainer().decode(String.self))
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
     public var description: String { rawValue }
 }
 
-public struct EnvironmentID: Sendable, Hashable, Codable, CustomStringConvertible {
+public struct ProjectID: StringIdentifier {
     public var rawValue: String
     public init(_ rawValue: String) { self.rawValue = rawValue }
-    public var description: String { rawValue }
 }
 
-public struct TokenID: Sendable, Hashable, Codable, CustomStringConvertible {
+public struct EnvironmentID: StringIdentifier {
     public var rawValue: String
     public init(_ rawValue: String) { self.rawValue = rawValue }
-    public var description: String { rawValue }
+}
+
+public struct TokenID: StringIdentifier {
+    public var rawValue: String
+    public init(_ rawValue: String) { self.rawValue = rawValue }
 }
 
 /// A group of flags, usually one app or service.

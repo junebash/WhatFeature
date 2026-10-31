@@ -97,36 +97,3 @@ extension WhatFeatureRequestContext {
         return environment
     }
 }
-
-extension DecodingError {
-    /// A short, client-safe description. Never includes context values.
-    var summary: String {
-        switch self {
-        case .keyNotFound(let key, let context):
-            "Missing '\((context.codingPath + [key]).dotPath)'"
-        case .typeMismatch(_, let context), .valueNotFound(_, let context), .dataCorrupted(let context):
-            context.codingPath.isEmpty
-                ? context.debugDescription
-                : "'\(context.codingPath.dotPath)': \(context.debugDescription)"
-        @unknown default:
-            "Invalid request"
-        }
-    }
-}
-
-extension [any CodingKey] {
-    var dotPath: String { map(\.stringValue).joined(separator: ".") }
-}
-
-extension Response {
-    static func json(
-        _ value: some Encodable,
-        status: HTTPResponse.Status,
-        headers: HTTPFields = [:]
-    ) throws -> Response {
-        var headers = headers
-        headers[.contentType] = "application/json"
-        let data = try JSONEncoder().encode(value)
-        return Response(status: status, headers: headers, body: .init(byteBuffer: ByteBuffer(data: data)))
-    }
-}

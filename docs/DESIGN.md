@@ -245,25 +245,34 @@ Environment versions are stored in the database, so ETags stay valid across rest
 
 ### Admin (`/admin/v1`)
 
-Auth: `Authorization: Bearer wf_admin_…`
+Auth: `Authorization: Bearer wf_admin_…` (or `X-API-Key`). A missing, unknown or revoked token gets `401`; an evaluation token gets `403`. Projects and environments are addressed by **key** in paths; tokens by ID.
 
-| Method | Path | Notes |
-|---|---|---|
-| `GET` / `POST` | `/projects` | |
-| `GET` / `PATCH` / `DELETE` | `/projects/{project}` | |
-| `GET` / `POST` | `/projects/{project}/environments` | |
-| `GET` / `POST` | `/projects/{project}/flags` | List filters: `createdBy`, `includeArchived`. Sort: `createdAt`, `key`. |
-| `GET` / `PATCH` / `DELETE` | `/projects/{project}/flags/{key}` | Edit description, variants (type stays fixed) |
-| `POST` | `/projects/{project}/flags/{key}/archive` and `/unarchive` | |
-| `GET` / `PUT` | `/projects/{project}/environments/{env}/flags/{key}` | That environment's config: enabled, rules, default |
-| `POST` | `/projects/{project}/environments/{env}/flags/{key}/evaluate` | **Dry run.** "What does this user get, and why?" Returns the matched rule index too. Stores nothing. For support questions. |
-| `GET` / `POST` | `/tokens` | Creating a token returns the secret **once** |
-| `POST` | `/tokens/{id}/revoke` | |
-| `GET` | `/audit` | Filters: project, flag, actor, time range |
+| Method | Path | Body / query | Returns |
+|---|---|---|---|
+| `GET` / `POST` | `/projects` | `{key, name?}` | project(s) |
+| `GET` | `/projects/{project}` | | project |
+| `GET` / `POST` | `/projects/{project}/environments` | `{key, name?}` | environment(s) |
+| `GET` | `/projects/{project}/flags` | `includeArchived=true`, `createdBy=token:<id>`, `sort=key\|createdAt`, `order=asc\|desc` | flags |
+| `POST` | `/projects/{project}/flags` | `{key, type, variants, description?, isExperiment?}` | flag detail |
+| `GET` | `/projects/{project}/flags/{flag}` | | flag detail |
+| `PATCH` | `/projects/{project}/flags/{flag}` | any of `{description, variants, isExperiment}` | flag detail |
+| `DELETE` | `/projects/{project}/flags/{flag}` | | `204` |
+| `POST` | `/projects/{project}/flags/{flag}/archive`, `/unarchive` | | flag detail |
+| `GET` / `PUT` | `/projects/{project}/environments/{env}/flags/{flag}` | a whole `FlagConfig` | config, with its new `version` |
+| `POST` | `/projects/{project}/environments/{env}/flags/{flag}/evaluate` | `{context}` | **Dry run**: OFREP-style result plus `matchedRule` (missing means the default) and `configVersion`. Stores nothing. For "why did this user get that?" |
+| `GET` / `POST` | `/tokens` | `{name, kind: admin\|evaluation, project?, environment?}` | `{token, secret}`. The secret appears **only** in this response. Lists never show secrets or hashes. |
+| `POST` | `/tokens/{id}/revoke` | | token |
+| `GET` | `/audit` | `project=<key>`, `flag`, `actor`, `since` / `until` (ISO 8601), `limit` (1–1000, default 100) | entries, newest first, with `before`/`after` as JSON |
+
+"Flag detail" is `{flag, configs}`, where `configs` maps each environment key to that environment's config. One call shows a flag's state everywhere.
+
+Errors are `{"error": "…", "issues": ["…"]?}`: `400` for bad input (all validation problems at once, in `issues`), `404` for unknown keys, `409` for duplicate keys.
+
+Every admin write checks its input first (variant values match the flag type, rules reference real variants, rollout weights add up to 10,000), then writes the change and its audit entry in **one transaction**. Changing a flag's variants re-checks every environment's config, so a variant still in use can't be removed.
+
+Not yet: renaming or deleting projects and environments, and protection against two people editing the same config at once (an `If-Match` on the config version would do it).
 
 Plus `GET /health` with no auth.
-
-Every admin write checks its input first (variant values match the flag type, rules reference real variants, rollout weights add up to 10,000), then writes the change and its audit entry in **one transaction**.
 
 ## Auth and tokens
 

@@ -178,6 +178,76 @@ public final class SQLiteStore: EvaluationStore {
         return flag
     }
 
+    /// What `updateFlag` can change. `nil` leaves a field as it is. A flag's key and type never change.
+    public struct FlagChanges: Sendable, Hashable, Codable {
+        public var description: String?
+        public var variants: [String: JSONValue]?
+        public var isExperiment: Bool?
+
+        public init(description: String? = nil, variants: [String: JSONValue]? = nil, isExperiment: Bool? = nil) {
+            self.description = description
+            self.variants = variants
+            self.isExperiment = isExperiment
+        }
+    }
+
+    /// New variants are checked against every environment's config, so a variant still in use can't be removed.
+    @discardableResult
+    public func updateFlag(key: String, in projectID: ProjectID, changes: FlagChanges, by actor: AuditActor) async throws -> Flag {
+        let (flag, environmentIDs) = try await database.write { db in
+            guard var record = try FlagRecord.fetchOne(db, key: ["projectID": projectID.rawValue, "key": key]) else {
+                throw StoreError.notFound("No flag with key '\(key)'")
+            }
+            let before = record.model
+            if let description = changes.description { record.description = description }
+            if let variants = changes.variants { record.variants = variants }
+            if let isExperiment = changes.isExperiment { record.isExperiment = isExperiment }
+            let after = record.model
+            guard after != before else { return (after, [EnvironmentID]()) }
+
+            var issues: [String] = []
+            do {
+                try after.validate()
+            } catch let error as ValidationError {
+                issues += error.issues
+            }
+            let environments = try EnvironmentRecord.filter(Column("projectID") == projectID.rawValue).fetchAll(db)
+            for environment in environments {
+                let config = try FlagConfigRecord.fetchOne(db, key: ["environmentID": environment.id, "flagKey": key])?.config
+                do {
+                    try config?.validate(for: after)
+                } catch let error as ValidationError {
+                    issues += error.issues.map { "Environment '\(environment.key)': \($0)" }
+                }
+            }
+            if !issues.isEmpty { throw StoreError.invalid(issues) }
+
+            try record.update(db)
+            let environmentIDs = environments.map { EnvironmentID($0.id) }
+            try Self.bumpVersions(of: environmentIDs, db)
+            try self.audit(db, actor, "flag.update", project: projectID, flagKey: key, before: before, after: after)
+            return (after, environmentIDs)
+        }
+        try await refreshSnapshots(environmentIDs)
+        return flag
+    }
+
+    /// Deletes the flag and its configs everywhere. Apps asking for it get `FLAG_NOT_FOUND` and use their own
+    /// default. Archiving is the gentler option.
+    public func deleteFlag(key: String, in projectID: ProjectID, by actor: AuditActor) async throws {
+        let environmentIDs = try await database.write { db in
+            guard let record = try FlagRecord.fetchOne(db, key: ["projectID": projectID.rawValue, "key": key]) else {
+                throw StoreError.notFound("No flag with key '\(key)'")
+            }
+            try record.delete(db)  // configs go with it (ON DELETE CASCADE)
+            let environmentIDs = try Self.environmentIDs(in: projectID, db)
+            try Self.bumpVersions(of: environmentIDs, db)
+            try self.audit(db, actor, "flag.delete", project: projectID, flagKey: key, before: record.model)
+            return environmentIDs
+        }
+        try await refreshSnapshots(environmentIDs)
+    }
+
     // MARK: - Flag configs
 
     public func config(flagKey: String, in environmentID: EnvironmentID) async throws -> FlagConfig? {
@@ -264,12 +334,16 @@ public final class SQLiteStore: EvaluationStore {
             createdAt: now()
         )
         try await database.write { db in
-            if let environmentID, try !EnvironmentRecord.exists(db, key: environmentID.rawValue) {
-                throw StoreError.notFound("No environment with ID '\(environmentID)'")
+            var projectID: ProjectID?
+            if let environmentID {
+                guard let environment = try EnvironmentRecord.fetchOne(db, key: environmentID.rawValue) else {
+                    throw StoreError.notFound("No environment with ID '\(environmentID)'")
+                }
+                projectID = ProjectID(environment.projectID)
             }
             try record.insert(db)
             // The audit entry describes the token, never its secret or hash.
-            try self.audit(db, actor, "token.create", environment: environmentID, after: record.model)
+            try self.audit(db, actor, "token.create", project: projectID, environment: environmentID, after: record.model)
         }
         return CreatedToken(token: record.model, secret: secret)
     }
@@ -291,7 +365,13 @@ public final class SQLiteStore: EvaluationStore {
             let before = record.model
             record.revokedAt = self.now()
             try record.update(db)
-            try self.audit(db, actor, "token.revoke", environment: record.environmentID.map(EnvironmentID.init), before: before, after: record.model)
+            let projectID = try record.environmentID
+                .flatMap { try EnvironmentRecord.fetchOne(db, key: $0) }
+                .map { ProjectID($0.projectID) }
+            try self.audit(
+                db, actor, "token.revoke",
+                project: projectID, environment: record.environmentID.map(EnvironmentID.init), before: before, after: record.model
+            )
             return record.model
         }
     }
@@ -322,12 +402,22 @@ public final class SQLiteStore: EvaluationStore {
 
     // MARK: - Audit log
 
-    /// Newest first.
-    public func auditEntries(projectID: ProjectID? = nil, flagKey: String? = nil, limit: Int = 100) async throws -> [AuditEntry] {
+    /// Newest first. Every filter is optional. `since` is inclusive, `until` exclusive.
+    public func auditEntries(
+        projectID: ProjectID? = nil,
+        flagKey: String? = nil,
+        actor: String? = nil,
+        since: Date? = nil,
+        until: Date? = nil,
+        limit: Int = 100
+    ) async throws -> [AuditEntry] {
         try await database.read { db in
             var request = AuditRecord.all()
             if let projectID { request = request.filter(Column("projectID") == projectID.rawValue) }
             if let flagKey { request = request.filter(Column("flagKey") == flagKey) }
+            if let actor { request = request.filter(Column("actor") == actor) }
+            if let since { request = request.filter(Column("timestamp") >= since) }
+            if let until { request = request.filter(Column("timestamp") < until) }
             return try request.order(Column("id").desc).limit(limit).fetchAll(db).map(\.model)
         }
     }
