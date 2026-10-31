@@ -13,11 +13,15 @@ struct OFREPRequest: Decodable {
 /// - success: `key`, `value`, `variant`, `reason`
 /// - disabled: `key`, `reason: DISABLED`, and no `value` (OFREP's "codeDefaultFlag": the app uses its own default)
 /// - failure: `key`, `errorCode`, `errorDetails`
+///
+/// Any of them can also carry `metadata` about the flag (see `OFREPFlagMetadata`).
 struct OFREPEvaluation: Encodable {
     var result: EvaluationResult
+    /// `nil` when the flag doesn't exist.
+    var flag: Flag?
 
     private enum CodingKeys: String, CodingKey {
-        case key, value, variant, reason, errorCode, errorDetails
+        case key, value, variant, reason, errorCode, errorDetails, metadata
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -34,7 +38,25 @@ struct OFREPEvaluation: Encodable {
             try container.encode(code, forKey: .errorCode)
             try container.encode(details, forKey: .errorDetails)
         }
+        if let metadata = flag.map(OFREPFlagMetadata.init), !metadata.isEmpty {
+            try container.encode(metadata, forKey: .metadata)
+        }
     }
+}
+
+/// OFREP's flag `metadata`: a flat object of strings, numbers and booleans. OpenFeature SDKs hand it to
+/// hooks as flag metadata, e.g. so an exposure-logging hook can tell experiments apart.
+///
+/// Keys are only sent when they say something, so most flags have no `metadata` at all.
+struct OFREPFlagMetadata: Encodable {
+    /// `true` for flags marked as experiments (A/B tests). Left out otherwise.
+    var experiment: Bool?
+
+    init(flag: Flag) {
+        experiment = flag.isExperiment ? true : nil
+    }
+
+    var isEmpty: Bool { experiment == nil }
 }
 
 struct OFREPBulkResponse: Encodable {

@@ -98,7 +98,7 @@ Shared by every environment in a project.
 - `type` — `boolean | string | number | object`. **Cannot change after creation.** Make a new flag instead.
 - `variants` — named values, e.g. `{ "on": true, "off": false }` or `{ "control": "blue", "test": "green" }`. Every value must match `type`.
 - `description`
-- `isExperiment` — marks the flag as an A/B test (assignment only for now)
+- `isExperiment` — marks the flag as an A/B test (assignment only for now). OFREP results for it carry `"metadata": {"experiment": true}`.
 - `createdBy` (the actor, e.g. `token:<id>` or `system:seed`), `createdAt`
 - `archivedAt` — archived flags are hidden from listings by default and evaluate as `DISABLED`
 
@@ -228,6 +228,13 @@ Responses follow OFREP 0.4 (`service/openapi.yaml` in [open-feature/protocol](ht
 | Unreadable body | `400` | `errorCode: PARSE_ERROR` (or `INVALID_CONTEXT` for valid JSON with a bad context), plus `key` on the single-flag endpoint |
 
 In the bulk response, each flag is one of the first three shapes, sorted by key.
+
+**Flag metadata.** Any result for a flag that exists (resolved, disabled, or an error like `TARGETING_KEY_MISSING`) can carry OFREP's `metadata`: a flat object of strings, numbers and booleans. OpenFeature SDKs pass it to hooks as flag metadata, so an exposure-logging hook can check `experiment` and log only A/B tests. `swift-ofrep` reads it.
+
+- Today the only key is `experiment: true`, on flags marked `isExperiment`.
+- Keys are only sent when they say something: other flags get no `metadata` at all, rather than `{"experiment": false}`. That keeps responses small and the common shapes unchanged. Hooks should treat a missing key as `false`.
+- `FLAG_NOT_FOUND` has no flag, so no metadata.
+- Changing `isExperiment` bumps the environment version, so the bulk ETag changes and cached clients see the new metadata.
 
 Notes from reading the spec:
 
@@ -386,16 +393,15 @@ Everything was built and tested on Linux with Swift 6.4.2. It hasn't been built 
 - **Storage:** SQLite (GRDB) with migrations, an in-memory snapshot cache, revocable hashed tokens, an audit log written in the same transaction as each change, and an idempotent seed file (`examples/seed.json`).
 - **Admin API:** projects, environments, flags (create, update, archive, delete), per-environment configs, dry-run evaluation, tokens, audit log, `me`.
 - **CLI:** every admin task, through the admin API (see **CLI**), plus `db token` for bootstrapping.
-- **A/B assignment:** sticky rollouts, plus the `isExperiment` marker on flags.
+- **A/B assignment:** sticky rollouts, plus the `isExperiment` marker on flags, sent to apps as OFREP flag metadata (`"experiment": true`).
 - **Rate limiting:** per admin token, `429` with `Retry-After`. Evaluation tokens are left to a proxy, like the big flag services do (see **Rate limiting**).
 
 ### Left for v1
 
-1. **Flag metadata in OFREP responses**, e.g. `"metadata": {"experiment": true}`, so client-side hooks can tell experiments apart when logging exposures. OFREP has a `metadata` field for this.
-2. **Dockerfile.** Docker isn't available in the dev container, so it needs a first build on a Mac.
-3. **Pick a host and deploy.** See **Deployment** and **Open questions**.
-4. **Build and test on macOS** (`swift test`, or open the package in Xcode).
-5. **CI**, e.g. GitHub Actions running `swift test` on Linux and macOS for every push to `main`.
+1. **Dockerfile.** Docker isn't available in the dev container, so it needs a first build on a Mac.
+2. **Pick a host and deploy.** See **Deployment** and **Open questions**.
+3. **Build and test on macOS** (`swift test`, or open the package in Xcode).
+4. **CI**, e.g. GitHub Actions running `swift test` on Linux and macOS for every push to `main`.
 
 ### Known gaps (fine for now; fix if they start to hurt)
 

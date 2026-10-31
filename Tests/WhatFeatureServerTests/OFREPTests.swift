@@ -10,7 +10,7 @@ import WhatFeatureStorage
 
 private let token = "wf_eval_test"
 
-/// Project `demo` with environment `dev`, the token above, and three flags.
+/// Project `demo` with environment `dev`, the token above, and three flags. `half` is an experiment.
 private func makeStore() async throws -> SQLiteStore {
     let seed = """
     {"projects": [{"key": "demo", "environments": [{"key": "dev", "evaluationTokens": ["\(token)"]}], "flags": [
@@ -20,7 +20,7 @@ private func makeStore() async throws -> SQLiteStore {
         "defaultResult": {"variant": "off"}
       }}},
       {"key": "checkout-v2", "type": "boolean", "variants": {"on": true, "off": false}},
-      {"key": "half", "type": "boolean", "variants": {"on": true, "off": false}, "configs": {"dev": {
+      {"key": "half", "type": "boolean", "variants": {"on": true, "off": false}, "isExperiment": true, "configs": {"dev": {
         "enabled": true,
         "defaultResult": {"rollout": [{"variant": "on", "weight": 5000}, {"variant": "off", "weight": 5000}]}
       }}}
@@ -113,6 +113,67 @@ private func post(
             guard case .object(let json) = reply.json else { Issue.record("Expected a JSON object"); return }
             #expect(json["key"] == "new-onboarding")
             #expect(json["errorCode"] == .string(errorCode))
+        }
+    }
+}
+
+@Suite struct MetadataTests {
+    @Test func experimentsSayTheyAreExperiments() async throws {
+        let app = buildApplication(store: try await makeStore())
+        try await app.test(.router) { client in
+            let reply = try await post(client, "/ofrep/v1/evaluate/flags/half", #"{"context": {"targetingKey": "u1"}}"#)
+            #expect(reply.status == .ok)
+            #expect(reply.json?["metadata"] == ["experiment": true])
+        }
+    }
+
+    /// Errors about a real flag carry its metadata too, as OFREP allows.
+    @Test func errorsKeepTheMetadata() async throws {
+        let app = buildApplication(store: try await makeStore())
+        try await app.test(.router) { client in
+            let reply = try await post(client, "/ofrep/v1/evaluate/flags/half", #"{"context": {}}"#)
+            #expect(reply.json?["errorCode"] == "TARGETING_KEY_MISSING")
+            #expect(reply.json?["metadata"] == ["experiment": true])
+        }
+    }
+
+    @Test func otherFlagsHaveNoMetadata() async throws {
+        let app = buildApplication(store: try await makeStore())
+        try await app.test(.router) { client in
+            let reply = try await post(client, "/ofrep/v1/evaluate/flags/new-onboarding", #"{"context": {}}"#)
+            #expect(reply.json?["metadata"] == nil)
+            let missing = try await post(client, "/ofrep/v1/evaluate/flags/nope", #"{"context": {}}"#)
+            #expect(missing.json?["metadata"] == nil)
+        }
+    }
+
+    @Test func bulkResultsCarryMetadata() async throws {
+        let app = buildApplication(store: try await makeStore())
+        try await app.test(.router) { client in
+            let reply = try await post(client, "/ofrep/v1/evaluate/flags", #"{"context": {"targetingKey": "u1"}}"#)
+            guard case .array(let flags) = reply.json?["flags"] else { Issue.record("Expected {\"flags\": [...]}"); return }
+            let metadata = flags.map { $0["metadata"] }
+            #expect(metadata == [nil, ["experiment": true], nil])
+        }
+    }
+}
+
+extension MetadataTests {
+    /// Marking a flag as an experiment changes the ETag, so cached clients pick up the new metadata.
+    @Test func markingAnExperimentChangesTheETag() async throws {
+        let store = try await makeStore()
+        try await buildApplication(store: store).test(.router) { client in
+            let body = #"{"context": {"targetingKey": "u1"}}"#
+            let first = try await post(client, "/ofrep/v1/evaluate/flags", body)
+            let etag = try #require(first.headers[.eTag])
+
+            let project = try #require(try await store.project(key: "demo"))
+            _ = try await store.updateFlag(key: "checkout-v2", in: project.id, changes: .init(isExperiment: true), by: .system("test"))
+
+            let second = try await post(client, "/ofrep/v1/evaluate/flags", body, headers: [.authorization: "Bearer \(token)", .ifNoneMatch: etag])
+            #expect(second.status == .ok)
+            guard case .array(let flags) = second.json?["flags"] else { Issue.record("Expected {\"flags\": [...]}"); return }
+            #expect(flags.first?["metadata"] == ["experiment": true])
         }
     }
 }
