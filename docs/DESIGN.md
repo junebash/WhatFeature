@@ -1,6 +1,6 @@
 # WhatFeature design
 
-Status: draft. This records the decisions made so far. Anything under **Open questions** is not decided.
+Status: most of v1 is built; see **Status and roadmap** near the end for what's done and what's left. This doc records the decisions. Anything under **Open questions** is not decided.
 
 ## Goal
 
@@ -38,13 +38,13 @@ It is also a learning project: the point is to understand how a flag service wor
 ## Architecture
 
 ```
-          apps (OpenFeature SDK + OFREP provider)        me (curl / scripts)
+          apps (OpenFeature SDK + OFREP provider)        me (whatfeature CLI)
                          │                                     │
               POST /ofrep/v1/evaluate/...            /admin/v1/...
                          │                                     │
                 ┌────────▼─────────────────────────────────────▼───────┐
                 │  WhatFeatureServer (Hummingbird)                     │
-                │  auth middleware · rate limiter · routes             │
+                │  token middleware · routes · (rate limiter: planned) │
                 └────────┬─────────────────────────────────┬───────────┘
                          │ read (hot path)                 │ write
                 ┌────────▼──────────┐             ┌────────▼──────────┐
@@ -99,7 +99,7 @@ Shared by every environment in a project.
 - `variants` — named values, e.g. `{ "on": true, "off": false }` or `{ "control": "blue", "test": "green" }`. Every value must match `type`.
 - `description`
 - `isExperiment` — marks the flag as an A/B test (assignment only for now)
-- `createdBy` (token ID), `createdAt`
+- `createdBy` (the actor, e.g. `token:<id>` or `system:seed`), `createdAt`
 - `archivedAt` — archived flags are hidden from listings by default and evaluate as `DISABLED`
 
 ### FlagConfig (per environment)
@@ -172,7 +172,7 @@ Rules:
 - No regex operator yet. Swift's `Regex` isn't `Sendable`, so a compiled one can't live in a shared snapshot. `endsWith` covers the common case (email domains). We can add it later with a `Sendable` wrapper.
 - **If the attribute is missing from the context (or `null`), the condition is false, whatever the operator.** The only exception is `notExists`. The principle: when we don't know, the rule doesn't fire, and evaluation falls through to later rules or the default. One consequence: `notIn` is not the same as "not `in`". `country notIn ["DE"]` does *not* match a context with no `country`. To match those as well, add a separate rule with `country notExists`.
 - If the types don't match (e.g. `lt` on a string), the condition is false. It is not an error.
-- `Operator` is a Swift enum. Adding one means adding a case and its implementation, and the compiler shows every place that needs updating.
+- Adding an operator means adding a case to `Condition.Operator` (the JSON name) and to `Predicate` (or one of its groups). The compiler then points at every `switch` that needs updating.
 - **Individual targeting** ("put this user in the beta") is just `targetingKey in [...]`. Note that this stores user or device IDs inside the flag config. That is a deliberate choice, made per flag.
 
 ## Evaluation
@@ -181,7 +181,7 @@ Rules:
 evaluate(flagKey, context, environmentSnapshot):
   flag missing                 → error FLAG_NOT_FOUND
   flag archived or disabled    → reason DISABLED (app uses its code default)
-  requested type ≠ flag type   → error TYPE_MISMATCH (when the request says which type)
+  requested type ≠ flag type   → error TYPE_MISMATCH (only if the caller passes a type; OFREP never does)
   for rule in rules:
       if every condition matches:
           variant → value, reason TARGETING_MATCH
@@ -255,7 +255,7 @@ Auth: `Authorization: Bearer wf_admin_…` (or `X-API-Key`). A missing, unknown 
 | `GET` | `/projects/{project}` | | project |
 | `GET` / `POST` | `/projects/{project}/environments` | `{key, name?}` | environment(s) |
 | `GET` | `/projects/{project}/flags` | `includeArchived=true`, `createdBy=token:<id>`, `sort=key\|createdAt`, `order=asc\|desc` | flags |
-| `POST` | `/projects/{project}/flags` | `{key, type, variants, description?, isExperiment?}` | flag detail |
+| `POST` | `/projects/{project}/flags` | `{key, type, variants, description?, isExperiment?, defaultVariant?}` | flag detail |
 | `GET` | `/projects/{project}/flags/{flag}` | | flag detail |
 | `PATCH` | `/projects/{project}/flags/{flag}` | any of `{description, variants, isExperiment}` | flag detail |
 | `DELETE` | `/projects/{project}/flags/{flag}` | | `204` |
@@ -318,7 +318,7 @@ Parsing rules worth knowing:
 
 ## Auth and tokens
 
-- Format: `wf_admin_<32 random bytes, base62>` or `wf_eval_<…>`. The prefix makes leaked tokens easy to spot, and secret scanners can match it.
+- Format: `wf_admin_` or `wf_eval_`, then 43 random base62 characters (about 256 bits). The prefix makes leaked tokens easy to spot, and secret scanners can match it.
 - Stored as SHA-256 of the secret. A slow password hash like bcrypt isn't needed, because these are long random strings, not human passwords.
 - Fields: `id`, `hash`, `kind` (`admin` / `evaluation`), `scopes`, `environmentID?` (evaluation tokens only; the environment implies the project), `name`, `createdBy`, `createdAt`, `lastUsedAt`, `revokedAt`.
 - `lastUsedAt` is written at most once a minute per token, so a busy app doesn't cause a database write per request.
@@ -341,13 +341,13 @@ Evaluation contexts can contain personal information (user IDs, emails). The ser
 
 - uses the context to evaluate, then discards it
 - never writes contexts to the database
-- never logs context values. Request logs record the token ID, flag key, and result reason only.
+- never logs context values. Request logs record the method and path only (for single-flag evaluation, the path includes the flag key).
 
 The exception is individual targeting (see Operators). There, an ID I chose to put into a rule is stored in the flag config.
 
 ## Rate limiting
 
-An in-memory token bucket for each token. Over the limit → `429` with `Retry-After`, as OFREP specifies. This works because there is a single instance.
+**Not built yet.** The plan: an in-memory token bucket for each token. Over the limit → `429` with `Retry-After`, as OFREP specifies. In-memory works because there is a single instance.
 
 ## Deployment
 
@@ -359,18 +359,48 @@ Not chosen yet. Constraints that keep every option open:
 
 Candidates to price out: Fly.io, Oracle Cloud's free tier, Google Cloud Run (needs a fix for SQLite on its temporary disk, e.g. Litestream), or hardware at home behind Cloudflare Tunnel.
 
-## Roadmap
+## Status and roadmap
+
+Everything was built and tested on Linux with Swift 6.4.2. It hasn't been built on macOS yet.
+
+### Done
+
+- **Core:** flag model, typed rules and operators, semver, sticky SHA-256 bucketing, evaluation with OFREP reasons, validation.
+- **OFREP:** single and bulk evaluation, bearer or `X-API-Key` tokens, ETag / `304`, disabled flags as "code default" results.
+- **Storage:** SQLite (GRDB) with migrations, an in-memory snapshot cache, revocable hashed tokens, an audit log written in the same transaction as each change, and an idempotent seed file (`examples/seed.json`).
+- **Admin API:** projects, environments, flags (create, update, archive, delete), per-environment configs, dry-run evaluation, tokens, audit log, `me`.
+- **CLI:** every admin task, through the admin API (see **CLI**), plus `db token` for bootstrapping.
+- **A/B assignment:** sticky rollouts, plus the `isExperiment` marker on flags.
+
+### Left for v1
+
+1. **Rate limiting.** See **Rate limiting**.
+2. **Flag metadata in OFREP responses**, e.g. `"metadata": {"experiment": true}`, so client-side hooks can tell experiments apart when logging exposures. OFREP has a `metadata` field for this.
+3. **Dockerfile.** Docker isn't available in the dev container, so it needs a first build on a Mac.
+4. **Pick a host and deploy.** See **Deployment** and **Open questions**.
+5. **Build and test on macOS** (`swift test`, or open the package in Xcode).
+6. **CI**, e.g. GitHub Actions running `swift test` on Linux and macOS for every push to `main`.
+
+### Known gaps (fine for now; fix if they start to hurt)
+
+- Projects and environments can't be renamed or deleted.
+- No protection against two edits to the same config at once. An `If-Match` on the config version would do it.
+- Environments created *after* a flag get the sorted-first variant as their default, even if the flag was created with `--default`.
+- The CLI keeps its admin token in a `0600` file. The macOS Keychain would be better there.
+- No regex operator (see **Operators**).
+- Integer vs. float numbers (see **Open questions**).
+
+### Later
 
 | Version | Scope |
 |---|---|
-| **v1** | Everything above: OFREP single + bulk with ETag, admin API, rules, rollouts, A/B assignment (`isExperiment`), tokens, audit log, dry-run evaluate |
 | **v1.1** | SSE, as OFREP defines it (ADR-0008): the bulk response gets an `eventStreams` entry pointing at our SSE endpoint, which sends `{"type": "refetchEvaluation", "etag": …}` when config changes. Clients re-fetch the bulk endpoint. No custom extension needed. Also experiment exposure tracking, lined up with OpenFeature's tracking API. |
-| **v1.5** | Support tooling: look up "what has this user been getting" and opt them into betas easily. Needs a careful decision about what gets stored (see Privacy). |
+| **v1.5** | Support tooling: look up "what has this user been getting" and opt them into betas easily. Needs a careful decision about what gets stored (see **Privacy**). |
 | **later** | UI, scheduled flag changes, flag dependencies, admin roles, Postgres store, experiment analysis |
 
 ## Open questions
 
-1. Hosting (see Deployment).
+1. **Hosting** (see **Deployment**). The cheapest option that keeps a long-lived process (needed for SSE in v1.1) wins.
 2. **Integer vs. float.** OFREP has separate integer and float value types; we have one `number`. `swift-ofrep` decodes a whole number like `1` as an integer, so asking it for a `Double` flag whose value happens to be whole may give a type mismatch. Options: split `number` into `integer` and `float` flag types, or accept the quirk. Not urgent until a number flag exists.
 
 ## Clients
