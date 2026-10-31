@@ -1,27 +1,33 @@
 {
-  "environments": [
+  "projects": [
     {
-      "id": "dev",
-      "evaluationTokens": ["wf_eval_dev_local_only"],
+      "key": "demo",
+      "name": "Demo app",
+      "environments": [
+        { "key": "dev", "evaluationTokens": ["wf_eval_dev_local_only"] },
+        { "key": "prod" }
+      ],
       "flags": [
         {
           "key": "new-onboarding",
           "type": "boolean",
           "variants": { "on": true, "off": false },
           "description": "New onboarding flow: on for the US, 10% of everyone else.",
-          "config": {
-            "enabled": true,
-            "rules": [
-              {
-                "conditions": [{ "attribute": "country", "operator": "equals", "value": "US" }],
-                "result": { "variant": "on" }
-              },
-              {
-                "conditions": [],
-                "result": { "rollout": [{ "variant": "on", "weight": 1000 }, { "variant": "off", "weight": 9000 }] }
-              }
-            ],
-            "defaultResult": { "variant": "off" }
+          "configs": {
+            "dev": {
+              "enabled": true,
+              "rules": [
+                {
+                  "conditions": [{ "attribute": "country", "operator": "equals", "value": "US" }],
+                  "result": { "variant": "on" }
+                },
+                {
+                  "conditions": [],
+                  "result": { "rollout": [{ "variant": "on", "weight": 1000 }, { "variant": "off", "weight": 9000 }] }
+                }
+              ],
+              "defaultResult": { "variant": "off" }
+            }
           }
         },
         {
@@ -29,23 +35,24 @@
           "type": "string",
           "variants": { "short": "Hi!", "long": "Welcome back! Good to see you." },
           "description": "Longer welcome text for app version 2.0 and up.",
-          "config": {
-            "enabled": true,
-            "rules": [
-              {
-                "conditions": [{ "attribute": "appVersion", "operator": "semverGte", "value": "2.0.0" }],
-                "result": { "variant": "long" }
-              }
-            ],
-            "defaultResult": { "variant": "short" }
+          "configs": {
+            "dev": {
+              "enabled": true,
+              "rules": [
+                {
+                  "conditions": [{ "attribute": "appVersion", "operator": "semverGte", "value": "2.0.0" }],
+                  "result": { "variant": "long" }
+                }
+              ],
+              "defaultResult": { "variant": "short" }
+            }
           }
         },
         {
           "key": "checkout-v2",
           "type": "boolean",
           "variants": { "on": true, "off": false },
-          "description": "Not ready yet.",
-          "config": { "enabled": false, "defaultResult": { "variant": "off" } }
+          "description": "Not ready yet. Disabled everywhere (no configs listed)."
         }
       ]
     }

@@ -1,4 +1,5 @@
 public import Hummingbird
+public import WhatFeatureStorage
 
 public struct WhatFeatureRequestContext: RequestContext {
     public var coreContext: CoreRequestContextStorage

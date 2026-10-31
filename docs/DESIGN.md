@@ -23,7 +23,7 @@ It is also a learning project: the point is to understand how a flag service wor
 | Evaluation API | OFREP 0.4, with the JSON written by hand (see below for why) |
 | Admin API | Our own REST API (OpenFeature doesn't define one) |
 | Where rules run | Server only. Clients hold resolved values. |
-| Storage | SQLite behind a store protocol, so Postgres can replace it later. One database for everything. Until then, an in-memory store loaded from a seed file. |
+| Storage | SQLite via [GRDB](https://github.com/groue/GRDB.swift). One database for everything. Evaluation goes through a small `EvaluationStore` protocol, so Postgres could replace SQLite later. |
 | Tenancy | Projects, each with environments (e.g. `dev`, `prod`) |
 | Flag types | boolean, string, number, object, with named variants |
 | Targeting | Small custom rule model, built to be extended |
@@ -48,9 +48,9 @@ It is also a learning project: the point is to understand how a flag service wor
                 └────────┬─────────────────────────────────┬───────────┘
                          │ read (hot path)                 │ write
                 ┌────────▼──────────┐             ┌────────▼──────────┐
-                │ ConfigCache       │◄── reload ──│ FlagStore         │
-                │ (in-memory, per   │             │ (protocol;        │
-                │  environment)     │             │  SQLite impl)     │
+                │ snapshot cache    │◄── reload ──│ SQLiteStore       │
+                │ (in-memory, per   │             │ (GRDB; behind     │
+                │  environment)     │             │  EvaluationStore) │
                 └────────┬──────────┘             └───────────────────┘
                          │
                 ┌────────▼──────────┐
@@ -59,16 +59,18 @@ It is also a learning project: the point is to understand how a flag service wor
                 └───────────────────┘
 ```
 
-Evaluation never touches the database. Each environment's flag config is held in memory as an immutable snapshot with a version number. An admin write updates SQLite, then swaps in a new snapshot.
+Evaluation never touches the database for flags. Each environment's flags are held in memory as an immutable snapshot with a version number. An admin write updates SQLite, then swaps in a new snapshot. A slow read can't overwrite a newer snapshot, because the cache keeps whichever version is higher.
+
+Tokens are *not* cached: each request does one indexed lookup. So a token revoked from the CLI stops working immediately, even on a running server. Flags, on the other hand, should only be changed by the server process; another process writing flags to the same file wouldn't refresh the server's snapshots.
 
 ### Swift package layout
 
 | Target | Kind | Contents |
 |---|---|---|
 | `WhatFeatureCore` | library | Models, rule types, evaluation (`EnvironmentSnapshot.evaluate`), bucketing hash, validation. No networking, no database. Most tests live here. |
-| `WhatFeatureServer` | library | Hummingbird app, OFREP routes, token middleware, ETags. The `EvaluationStore` protocol and `InMemoryStore` (plus seed-file loading) live here for now. |
-| `WhatFeatureStorage` | library | *Not yet.* The SQLite store. |
-| `whatfeature` | executable | CLI. Today: `serve` (with `--seed`). Later: `token create`, `migrate`. |
+| `WhatFeatureStorage` | library | `EvaluationStore` protocol, `SQLiteStore` (schema, migrations, snapshot cache, tokens, audit log), seed-file loading. Depends on Core. |
+| `WhatFeatureServer` | library | Hummingbird app, OFREP routes, token middleware, ETags. Depends on Storage and Core. |
+| `whatfeature` | executable | CLI: `serve` (`--database`, `--seed`), `token create`, `token list`, `token revoke`. Migrations run automatically whenever the database opens. |
 
 ## Data model
 
@@ -81,6 +83,10 @@ Project ──< Environment
 Token        (scoped to admin, or to one project + environment)
 AuditEntry   (one per admin write)
 ```
+
+In SQLite these are the tables `project`, `environment`, `flag`, `flagConfig`, `token` and `auditEntry`. A flag config's rules are stored as one JSON column rather than separate tables: they're nested and always read together, so splitting them up would only add joins.
+
+Every flag has a config in every environment of its project. A new flag gets a **disabled** config everywhere, and a new environment gets a disabled config for every existing flag. So "is it on in prod?" never depends on whether someone remembered to create a config.
 
 ### Flag
 
@@ -235,7 +241,7 @@ ETag = hash(environment config version + canonical JSON of the context)
 
 A changed context or a changed flag produces a new ETag. We can answer `304` without evaluating anything. `If-None-Match` accepts `*`, lists, and weak (`W/`) tags.
 
-The in-memory store starts its version counter at the current time in milliseconds, so a restarted server never reuses an old version (and its old ETags).
+Environment versions are stored in the database, so ETags stay valid across restarts. A throwaway `:memory:` database gets new environment IDs on every start, so its ETags never collide with older ones either.
 
 ### Admin (`/admin/v1`)
 
@@ -263,17 +269,20 @@ Every admin write checks its input first (variant values match the flag type, ru
 
 - Format: `wf_admin_<32 random bytes, base62>` or `wf_eval_<…>`. The prefix makes leaked tokens easy to spot, and secret scanners can match it.
 - Stored as SHA-256 of the secret. A slow password hash like bcrypt isn't needed, because these are long random strings, not human passwords.
-- Fields: `id`, `hash`, `kind` (`admin` / `evaluation`), `scopes`, `projectID?`, `environmentID?`, `name`, `createdBy`, `createdAt`, `lastUsedAt`, `revokedAt`.
+- Fields: `id`, `hash`, `kind` (`admin` / `evaluation`), `scopes`, `environmentID?` (evaluation tokens only; the environment implies the project), `name`, `createdBy`, `createdAt`, `lastUsedAt`, `revokedAt`.
+- `lastUsedAt` is written at most once a minute per token, so a busy app doesn't cause a database write per request.
 - Revoking sets `revokedAt`. It works for every token, admin tokens included.
 - **Evaluation tokens are public.** Anything shipped in an app binary can be pulled out of it. So they are read-only and limited to one project + environment.
 - `scopes` is a list from the start, even though v1 only checks `admin` vs `evaluate`. Roles can be added later without a schema change.
-- **Bootstrap:** run `whatfeature token create --admin --name "June laptop"` on the server. It prints the token once.
+- **Bootstrap:** run `whatfeature token create --admin --name "June laptop"` on the server. It prints the token once. `whatfeature token list` and `whatfeature token revoke <id>` manage them; evaluation tokens come from `token create --project <key> --environment <key>`.
 
 ## Audit log
 
-`AuditEntry`: `id`, `timestamp`, `actorTokenID`, `action` (e.g. `flag.create`, `flagConfig.update`, `token.revoke`), `projectID?`, `environmentID?`, `flagKey?`, `before` (JSON), `after` (JSON).
+`AuditEntry`: `id`, `timestamp`, `actor`, `action` (e.g. `flag.create`, `flagConfig.update`, `token.revoke`), `projectID?`, `environmentID?`, `flagKey?`, `before` (JSON), `after` (JSON).
 
-Written in the same transaction as the change. Never edited or deleted through the API.
+`actor` is `token:<id>` for changes made through the API, or `system:<name>` for the server itself (`system:seed`, `system:cli`).
+
+Written in the same transaction as the change. Never edited or deleted through the API. Audit entries have no foreign keys, so they outlive whatever they describe. Token entries never include the secret or its hash.
 
 ## Privacy
 
@@ -311,8 +320,7 @@ Candidates to price out: Fly.io, Oracle Cloud's free tier, Google Cloud Run (nee
 ## Open questions
 
 1. Hosting (see Deployment).
-2. SQLite library: GRDB (mature, works on Linux) or `sqlite-nio` (async, NIO-based). Leaning GRDB. To decide while scaffolding.
-3. **Integer vs. float.** OFREP has separate integer and float value types; we have one `number`. `swift-ofrep` decodes a whole number like `1` as an integer, so asking it for a `Double` flag whose value happens to be whole may give a type mismatch. Options: split `number` into `integer` and `float` flag types, or accept the quirk. Not urgent until a number flag exists.
+2. **Integer vs. float.** OFREP has separate integer and float value types; we have one `number`. `swift-ofrep` decodes a whole number like `1` as an integer, so asking it for a `Double` flag whose value happens to be whole may give a type mismatch. Options: split `number` into `integer` and `float` flag types, or accept the quirk. Not urgent until a number flag exists.
 
 ## Clients
 

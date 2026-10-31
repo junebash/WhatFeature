@@ -1,5 +1,6 @@
 public import Hummingbird
 import Logging
+public import WhatFeatureStorage
 
 /// Builds the HTTP app. Kept separate from `main` so tests can run it in memory.
 public func buildApplication(

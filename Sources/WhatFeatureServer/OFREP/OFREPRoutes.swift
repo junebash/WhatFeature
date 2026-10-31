@@ -3,6 +3,7 @@ import Hummingbird
 import NIOCore
 import NIOFoundationCompat
 import WhatFeatureCore
+import WhatFeatureStorage
 
 /// `POST /ofrep/v1/evaluate/flags/{key}` and `POST /ofrep/v1/evaluate/flags`.
 struct OFREPRoutes {

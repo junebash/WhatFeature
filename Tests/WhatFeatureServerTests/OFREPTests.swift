@@ -6,28 +6,28 @@ import NIOFoundationCompat
 import Testing
 import WhatFeatureCore
 import WhatFeatureServer
+import WhatFeatureStorage
 
 private let token = "wf_eval_test"
-private let dev = EnvironmentID("dev")
 
-private func booleanFlag(_ key: String) -> Flag {
-    Flag(key: key, type: .boolean, variants: ["on": true, "off": false], createdBy: "test", createdAt: Date())
-}
-
-private func makeStore() async throws -> InMemoryStore {
-    let store = InMemoryStore()
-    await store.addEvaluationToken(token, for: dev)
-    try await store.put(
-        booleanFlag("new-onboarding"),
-        config: FlagConfig(
-            enabled: true,
-            rules: [Rule(conditions: [Condition("country", .equals("US"))], result: .variant("on"))],
-            defaultResult: .variant("off")
-        ),
-        in: dev
-    )
-    try await store.put(booleanFlag("checkout-v2"), config: FlagConfig(enabled: false, defaultResult: .variant("off")), in: dev)
-    try await store.put(booleanFlag("half"), config: FlagConfig(enabled: true, defaultResult: .rollout(["on": 5_000, "off": 5_000])), in: dev)
+/// Project `demo` with environment `dev`, the token above, and three flags.
+private func makeStore() async throws -> SQLiteStore {
+    let seed = """
+    {"projects": [{"key": "demo", "environments": [{"key": "dev", "evaluationTokens": ["\(token)"]}], "flags": [
+      {"key": "new-onboarding", "type": "boolean", "variants": {"on": true, "off": false}, "configs": {"dev": {
+        "enabled": true,
+        "rules": [{"conditions": [{"attribute": "country", "operator": "equals", "value": "US"}], "result": {"variant": "on"}}],
+        "defaultResult": {"variant": "off"}
+      }}},
+      {"key": "checkout-v2", "type": "boolean", "variants": {"on": true, "off": false}},
+      {"key": "half", "type": "boolean", "variants": {"on": true, "off": false}, "configs": {"dev": {
+        "enabled": true,
+        "defaultResult": {"rollout": [{"variant": "on", "weight": 5000}, {"variant": "off", "weight": 5000}]}
+      }}}
+    ]}]}
+    """
+    let store = try SQLiteStore.inMemory()
+    try await store.load(try JSONDecoder().decode(Seed.self, from: Data(seed.utf8)))
     return store
 }
 
@@ -195,7 +195,9 @@ private func post(
             #expect(otherUser.status == .ok)
 
             // Neither may a changed flag.
-            try await store.put(booleanFlag("brand-new"), config: FlagConfig(enabled: true, defaultResult: .variant("on")), in: dev)
+            let project = try #require(try await store.project(key: "demo"))
+            let dev = try #require(try await store.environment(key: "dev", in: project.id))
+            try await store.setConfig(FlagConfig(enabled: true, defaultResult: .variant("on")), flagKey: "checkout-v2", in: dev.id, by: .system("test"))
             let changed = try await post(client, "/ofrep/v1/evaluate/flags", body, headers: withETag(etag))
             #expect(changed.status == .ok)
             #expect(changed.headers[.eTag] != etag)
@@ -223,28 +225,5 @@ private func post(
             #expect(body["key"] == nil)
             #expect(body["errorCode"] == "PARSE_ERROR")
         }
-    }
-}
-
-@Suite struct SeedTests {
-    @Test func exampleSeedLoads() async throws {
-        let url = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appending(path: "examples/seed.json")
-        let store = InMemoryStore()
-        try await store.load(try Seed.read(from: url))
-        #expect(await store.snapshot(for: dev).entries.count == 3)
-        #expect(await store.environment(forTokenHash: TokenHash.of("wf_eval_dev_local_only")) == dev)
-    }
-
-    @Test func reportsInvalidFlags() async throws {
-        let json = """
-        {"environments": [{"id": "dev", "evaluationTokens": [], "flags": [
-          {"key": "bad", "type": "boolean", "variants": {"on": "yes"}, "config": {"enabled": true, "defaultResult": {"variant": "maybe"}}}
-        ]}]}
-        """
-        let seed = try JSONDecoder().decode(Seed.self, from: Data(json.utf8))
-        let error = try await #require(throws: SeedError.self) { try await InMemoryStore().load(seed) }
-        #expect(error.issues == ["dev/bad: Variant 'on' doesn't match the flag type 'boolean'"])
     }
 }

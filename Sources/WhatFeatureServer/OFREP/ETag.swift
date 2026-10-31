@@ -1,6 +1,7 @@
 import Crypto
 import Foundation
 import WhatFeatureCore
+import WhatFeatureStorage
 
 /// ETags for the bulk endpoint.
 ///

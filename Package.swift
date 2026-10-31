@@ -16,6 +16,7 @@ let package = Package(
     platforms: [.macOS(.v15)],
     products: [
         .library(name: "WhatFeatureCore", targets: ["WhatFeatureCore"]),
+        .library(name: "WhatFeatureStorage", targets: ["WhatFeatureStorage"]),
         .library(name: "WhatFeatureServer", targets: ["WhatFeatureServer"]),
         .executable(name: "whatfeature", targets: ["whatfeature"]),
     ],
@@ -26,6 +27,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.80.0"),
         .package(url: "https://github.com/apple/swift-http-types.git", from: "1.0.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.6.0"),
+        .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.0"),
     ],
     targets: [
         .target(
@@ -34,9 +36,19 @@ let package = Package(
             swiftSettings: swiftSettings + [.strictMemorySafety()]
         ),
         .target(
+            name: "WhatFeatureStorage",
+            dependencies: [
+                "WhatFeatureCore",
+                .product(name: "Crypto", package: "swift-crypto"),
+                .product(name: "GRDB", package: "GRDB.swift"),
+            ],
+            swiftSettings: swiftSettings
+        ),
+        .target(
             name: "WhatFeatureServer",
             dependencies: [
                 "WhatFeatureCore",
+                "WhatFeatureStorage",
                 .product(name: "Crypto", package: "swift-crypto"),
                 .product(name: "Hummingbird", package: "hummingbird"),
                 .product(name: "HTTPTypes", package: "swift-http-types"),
@@ -50,6 +62,7 @@ let package = Package(
             name: "whatfeature",
             dependencies: [
                 "WhatFeatureServer",
+                "WhatFeatureStorage",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "Hummingbird", package: "hummingbird"),
             ],
@@ -61,10 +74,16 @@ let package = Package(
             swiftSettings: swiftSettings
         ),
         .testTarget(
+            name: "WhatFeatureStorageTests",
+            dependencies: ["WhatFeatureCore", "WhatFeatureStorage"],
+            swiftSettings: swiftSettings
+        ),
+        .testTarget(
             name: "WhatFeatureServerTests",
             dependencies: [
                 "WhatFeatureCore",
                 "WhatFeatureServer",
+                "WhatFeatureStorage",
                 .product(name: "HTTPTypes", package: "swift-http-types"),
                 .product(name: "HummingbirdTesting", package: "hummingbird"),
                 .product(name: "NIOCore", package: "swift-nio"),
