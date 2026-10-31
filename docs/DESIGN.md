@@ -44,7 +44,7 @@ It is also a learning project: the point is to understand how a flag service wor
                          │                                     │
                 ┌────────▼─────────────────────────────────────▼───────┐
                 │  WhatFeatureServer (Hummingbird)                     │
-                │  token middleware · routes · (rate limiter: planned) │
+                │  token middleware · rate limiter · routes            │
                 └────────┬─────────────────────────────────┬───────────┘
                          │ read (hot path)                 │ write
                 ┌────────▼──────────┐             ┌────────▼──────────┐
@@ -347,7 +347,18 @@ The exception is individual targeting (see Operators). There, an ID I chose to p
 
 ## Rate limiting
 
-**Not built yet.** The plan: an in-memory token bucket for each token. Over the limit → `429` with `Retry-After`, as OFREP specifies. In-memory works because there is a single instance.
+An in-memory token bucket for each token. In-memory works because there is a single instance.
+
+- **Limits are per minute, per token**, and the bucket holds one minute's worth. So `600` means up to 600 requests at once, then 10 a second.
+- **Defaults:** 6,000 a minute for each evaluation token, 600 for each admin token. They're meant to stop runaway loops and abuse of a leaked token, not normal use. Evaluation gets more because one evaluation token is usually shared by every install of an app.
+- **Settings:** `serve --evaluation-rate-limit` / `RATE_LIMIT_EVALUATION` and `--admin-rate-limit` / `RATE_LIMIT_ADMIN`. A whole number, or `off`.
+- **Checked after the token.** Only real tokens get a bucket (keyed by the token's hash), so made-up tokens can't fill memory. They get `401` as before.
+- **Over the limit → `429` with `Retry-After`.** Every request counts, including `304`s.
+  - **OFREP:** `Retry-After` is an ISO 8601 date (`2024-02-07T12:00:00Z`), rounded up to the next second. That's what OFREP's spec shows, and `swift-ofrep` can't read plain seconds. No body, as the spec defines none.
+  - **Admin:** `Retry-After` in whole seconds (the usual HTTP form), plus `{"error": "Too many requests. Try again in N seconds."}`.
+- Logged at `notice`, with the environment ID (evaluation) or token ID (admin). Never the secret.
+
+*Trade-off:* evaluation tokens are public, so anyone who pulls one out of the app can use up its limit, and every install then gets `429` and falls back to its code defaults until the bucket refills. Keying on token **plus client IP** would stop that, but behind a proxy the IP comes from `X-Forwarded-For`, and which proxy to trust depends on the host. Revisit once a host is chosen. Until then, the fix is to revoke the token and ship a new one.
 
 ## Deployment
 
@@ -371,15 +382,15 @@ Everything was built and tested on Linux with Swift 6.4.2. It hasn't been built 
 - **Admin API:** projects, environments, flags (create, update, archive, delete), per-environment configs, dry-run evaluation, tokens, audit log, `me`.
 - **CLI:** every admin task, through the admin API (see **CLI**), plus `db token` for bootstrapping.
 - **A/B assignment:** sticky rollouts, plus the `isExperiment` marker on flags.
+- **Rate limiting:** per-token buckets, `429` with `Retry-After` (see **Rate limiting**).
 
 ### Left for v1
 
-1. **Rate limiting.** See **Rate limiting**.
-2. **Flag metadata in OFREP responses**, e.g. `"metadata": {"experiment": true}`, so client-side hooks can tell experiments apart when logging exposures. OFREP has a `metadata` field for this.
-3. **Dockerfile.** Docker isn't available in the dev container, so it needs a first build on a Mac.
-4. **Pick a host and deploy.** See **Deployment** and **Open questions**.
-5. **Build and test on macOS** (`swift test`, or open the package in Xcode).
-6. **CI**, e.g. GitHub Actions running `swift test` on Linux and macOS for every push to `main`.
+1. **Flag metadata in OFREP responses**, e.g. `"metadata": {"experiment": true}`, so client-side hooks can tell experiments apart when logging exposures. OFREP has a `metadata` field for this.
+2. **Dockerfile.** Docker isn't available in the dev container, so it needs a first build on a Mac.
+3. **Pick a host and deploy.** See **Deployment** and **Open questions**.
+4. **Build and test on macOS** (`swift test`, or open the package in Xcode).
+5. **CI**, e.g. GitHub Actions running `swift test` on Linux and macOS for every push to `main`.
 
 ### Known gaps (fine for now; fix if they start to hurt)
 
@@ -388,6 +399,7 @@ Everything was built and tested on Linux with Swift 6.4.2. It hasn't been built 
 - Environments created *after* a flag get the sorted-first variant as their default, even if the flag was created with `--default`.
 - The CLI keeps its admin token in a `0600` file. The macOS Keychain would be better there.
 - No regex operator (see **Operators**).
+- Requests without a valid token aren't rate limited, and anyone holding an evaluation token can use up its limit for everyone (see **Rate limiting**). Both want the client IP, which waits on the host.
 - Integer vs. float numbers (see **Open questions**).
 
 ### Later

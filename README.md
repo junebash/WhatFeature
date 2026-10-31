@@ -2,7 +2,7 @@
 
 A small feature flag service written in Swift. Flags are evaluated on the server and served over the [OpenFeature Remote Evaluation Protocol (OFREP)](https://github.com/open-feature/protocol), so any OpenFeature SDK with an OFREP provider can use it.
 
-Status: early, but usable end to end: OFREP evaluation, an admin API and CLI, SQLite storage, tokens, and an audit log. No UI. Still to do for v1: rate limiting, flag metadata in OFREP responses, a Dockerfile, a host, and a first build on macOS (everything so far was built on Linux). The full list is under "Status and roadmap" in [`docs/DESIGN.md`](docs/DESIGN.md), along with the design and the full admin API.
+Status: early, but usable end to end: OFREP evaluation, an admin API and CLI, SQLite storage, tokens, and an audit log. No UI. Still to do for v1: flag metadata in OFREP responses, a Dockerfile, a host, and a first build on macOS (everything so far was built on Linux). The full list is under "Status and roadmap" in [`docs/DESIGN.md`](docs/DESIGN.md), along with the design and the full admin API.
 
 ## Try it
 
@@ -104,6 +104,8 @@ Server:
 | `--host` | `HOST` | `127.0.0.1` |
 | `--port` | `PORT` | `8080` |
 | `--seed` | `SEED_FILE` | none |
+| `--evaluation-rate-limit` | `RATE_LIMIT_EVALUATION` | `6000` requests a minute per token (`off` to turn off) |
+| `--admin-rate-limit` | `RATE_LIMIT_ADMIN` | `600` requests a minute per token (`off` to turn off) |
 
 CLI (flag, else env, else what `login` saved):
 

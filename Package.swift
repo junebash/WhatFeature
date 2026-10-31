@@ -115,7 +115,7 @@ let package = Package(
         ),
         .testTarget(
             name: "WhatFeatureCLITests",
-            dependencies: ["whatfeature", "WhatFeatureCore"],
+            dependencies: ["whatfeature", "WhatFeatureCore", "WhatFeatureServer"],
             swiftSettings: swiftSettings
         ),
         .testTarget(

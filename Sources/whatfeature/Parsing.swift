@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import WhatFeatureServer
 import WhatFeatureCore
 
 /// Splits `name=value` at the first `=`.
@@ -108,4 +109,13 @@ func confirm(_ question: String, expecting answer: String) -> Bool {
     guard isatty(STDIN_FILENO) != 0 else { return false }
     print(question, terminator: " ")
     return readLine()?.trimmingCharacters(in: .whitespaces) == answer
+}
+
+/// Requests per minute, or `off` for no limit.
+func parseRateLimit(_ text: String, what: String) throws -> RateLimit? {
+    if text.lowercased() == "off" { return nil }
+    guard let perMinute = Int(text), perMinute > 0 else {
+        throw ValidationError("\(what) must be a whole number of requests per minute, or 'off'. Got '\(text)'.")
+    }
+    return RateLimit(requestsPerMinute: perMinute)
 }

@@ -1,14 +1,18 @@
+import Foundation
 import HTTPTypes
 import Hummingbird
+import Logging
 import WhatFeatureStorage
 
 /// Checks the evaluation token and records which environment it can read.
 ///
 /// OFREP allows either `Authorization: Bearer <token>` or `X-API-Key: <token>`; both work.
+/// A token over its rate limit gets `429` with a `Retry-After` date.
 struct EvaluationTokenMiddleware: RouterMiddleware {
     typealias Context = WhatFeatureRequestContext
 
     let store: any EvaluationStore
+    let rateLimiter: RateLimiter?
 
     // `next` has to be spelled `@concurrent`: Hummingbird doesn't use NonisolatedNonsendingByDefault, so
     // its protocol's plain `async` closure means `@concurrent`, while in this module it would mean
@@ -18,14 +22,25 @@ struct EvaluationTokenMiddleware: RouterMiddleware {
         context: Context,
         next: @concurrent (Request, Context) async throws -> Response
     ) async throws -> Response {
-        guard let secret = request.headers.presentedToken,
-              let environment = try await store.environment(forTokenHash: TokenHash.of(secret))
-        else {
+        let tokenHash = request.headers.presentedToken.map(TokenHash.of)
+        guard let tokenHash, let environment = try await store.environment(forTokenHash: tokenHash) else {
             return Response(status: .unauthorized, headers: [.wwwAuthenticate: "Bearer"])
+        }
+        if let wait = rateLimiter?.take(tokenHash) {
+            context.logger.notice("Evaluation token over its rate limit", metadata: ["environment": "\(environment)"])
+            return Response(status: .tooManyRequests, headers: [.retryAfter: Self.retryAfter(wait, from: .now)])
         }
         var context = context
         context.environment = environment
         return try await next(request, context)
+    }
+}
+
+extension EvaluationTokenMiddleware {
+    /// OFREP's spec gives `Retry-After` as an ISO 8601 date (e.g. `2024-02-07T12:00:00Z`), not the usual
+    /// HTTP forms, and `swift-ofrep` fails to read plain seconds. Rounded up to the next whole second.
+    static func retryAfter(_ wait: Duration, from now: Date) -> String {
+        Date(timeIntervalSince1970: (now.timeIntervalSince1970 + wait.seconds).rounded(.up)).formatted(.iso8601)
     }
 }
 
