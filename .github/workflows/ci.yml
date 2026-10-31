@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch cancels the run that's still going.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Where the server runs. Same Swift version as development so far.
+  linux:
+    runs-on: ubuntu-latest
+    container: swift:6.4.2-noble
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - run: swift --version
+      - run: swift test
+
+  # Where the CLI and development run. Uses the image's default Xcode.
+  macos:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - run: swift --version
+      - run: swift test
