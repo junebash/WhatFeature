@@ -7,6 +7,9 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 port := env("PORT", "8080")
 url := "http://localhost:" + port
 dev_db := "dev.sqlite"
+# The CLI, run directly. `swift run` re-checks the whole package on every call, which takes seconds even when
+# nothing changed; the `cli-binary` recipe below only builds when a source file is newer than this.
+bin := ".build/debug/whatfeature"
 # The evaluation token in examples/seed.json, for the demo project's dev environment. Local use only.
 eval_token := "wf_eval_dev_local_only"
 
@@ -28,24 +31,36 @@ test:
 xcode:
     open Package.swift
 
+# Build the CLI if it's missing or any source changed since the last build. The other recipes run this first.
+cli-binary:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -x {{bin}} ]] && [[ -z "$(find Sources Package.swift Package.resolved -newer {{bin}} -print -quit)" ]]; then
+        exit 0
+    fi
+    echo "Building the CLI…" >&2
+    swift build --product whatfeature
+    # A build with nothing to do leaves the binary's date alone; mark it current so the next check passes.
+    touch {{bin}}
+
 # --- Try it locally, no Docker ---
 
 # Create an admin token in the dev database and print it. Do this once, before `just serve`.
-token name="dev":
-    swift run --quiet whatfeature db token create --admin --name "{{name}}" --database {{dev_db}}
+token name="dev": cli-binary
+    {{bin}} db token create --admin --name "{{name}}" --database {{dev_db}}
 
 # Run the server on dev.sqlite, with the example project and flags loaded. Stop it with Ctrl-C.
-serve:
-    swift run whatfeature serve --database {{dev_db}} --seed examples/seed.json --port {{port}}
+serve: cli-binary
+    {{bin}} serve --database {{dev_db}} --seed examples/seed.json --port {{port}}
 
 # Point the CLI at the local server (Docker or not) and save your admin token. It asks for the token.
-login:
-    swift run --quiet whatfeature login --url {{url}} --project demo
+login: cli-binary
+    {{bin}} login --url {{url}} --project demo
 
 # Run any CLI command, e.g. `just cli flags list` or `just cli evaluate --all -e dev --targeting-key june`
 [positional-arguments]
-cli *args:
-    swift run --quiet whatfeature "$@"
+cli *args: cli-binary
+    {{bin}} "$@"
 
 # What an app gets for every flag, asked the way an app asks (OFREP, with the dev evaluation token)
 app-flags targeting_key="june":
