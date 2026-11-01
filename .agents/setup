@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Orb setup: Swift toolchain, just, and a warm .build so `swift build` and `swift test` start incremental.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+# Keep in step with the swift image in .github/workflows/ci.yml and the Dockerfile.
+swift_version=6.4.2
+swift_dir=/opt/swift-$swift_version
+
+step() { echo "==> $1"; SECONDS=0; }
+done_step() { echo "    ${SECONDS}s"; }
+
+step "System packages"
+# Swift's Debian 12 dependencies (swift.org), plus libsqlite3-dev for GRDB.
+packages=(binutils gcc git libcurl4-openssl-dev libedit-dev libicu-dev libncurses-dev libpython3-dev
+  libsqlite3-dev libstdc++-12-dev libxml2-dev pkg-config tzdata uuid-dev)
+missing=()
+for p in "${packages[@]}"; do dpkg -s "$p" >/dev/null 2>&1 || missing+=("$p"); done
+if ((${#missing[@]})); then
+  sudo apt-get update
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
+fi
+done_step
+
+step "Swift $swift_version"
+if [[ ! -x $swift_dir/usr/bin/swift ]]; then
+  tmp=$(mktemp -d)
+  curl -fsSL "https://download.swift.org/swift-$swift_version-release/debian12/swift-$swift_version-RELEASE/swift-$swift_version-RELEASE-debian12.tar.gz" \
+    | tar -xz -C "$tmp" --strip-components=1
+  sudo rm -rf "$swift_dir"
+  sudo mv "$tmp" "$swift_dir"
+fi
+# /usr/local/bin is on every shell's PATH, login or not.
+for tool in "$swift_dir"/usr/bin/*; do sudo ln -sf "$tool" /usr/local/bin/; done
+swift --version
+done_step
+
+step "just"
+command -v just >/dev/null || curl -fsSL https://just.systems/install.sh | sudo bash -s -- --to /usr/local/bin
+done_step
+
+step "Build package and tests"
+swift build --build-tests
+done_step

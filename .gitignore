@@ -6,3 +6,4 @@ xcuserdata/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+.amp/portals/*
