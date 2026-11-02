@@ -389,19 +389,23 @@ So:
 - **Admin tokens:** an in-memory token bucket per token, 600 requests a minute by default (`serve --admin-rate-limit` / `RATE_LIMIT_ADMIN`; a whole number, or `off`). The bucket holds one minute's worth, so that's up to 600 at once, then 10 a second. In-memory works because there is a single instance.
   - **Checked after the token.** Only real tokens get a bucket (keyed by the token's hash), so made-up tokens can't fill memory. They get `401` as before.
   - **Over the limit → `429`** with `Retry-After` in whole seconds and `{"error": "Too many requests. Try again in N seconds."}`. Logged at `notice` with the token ID, never the secret.
-- **Evaluation tokens: the server never limits them.** **Per-IP limits belong in the proxy in front of the server** (e.g. Cloudflare rate-limiting rules if we use Cloudflare Tunnel). Decide when the host is chosen. An abused token gets revoked and replaced (`whatfeature tokens revoke`).
+- **Evaluation tokens: the server never limits them.** **Per-IP limits belong in the proxy in front of the server** (e.g. Cloudflare rate-limiting rules if we use Cloudflare Tunnel). Fly's proxy doesn't do this; put Cloudflare in front if it's ever needed. An abused token gets revoked and replaced (`whatfeature tokens revoke`).
 
 *Considered:* an opt-in per-token evaluation limit. It was built, then removed: it's the very thing the services above avoid, and it would likely never be turned on. If it's ever needed, it's in the git history (commit `364e653`). Note for that day: OFREP's spec gives `Retry-After` as an ISO 8601 date, not seconds.
 
 ## Deployment
 
-Not chosen yet. Constraints that keep every option open:
+**Fly.io** ([`fly.toml`](../fly.toml), `just fly-*` recipes). One Machine, always on (no auto-stop, so it suits SSE later), shared CPU with 256 MB, SQLite on a 1 GB Fly volume at `/data`. Fly builds the same Docker image and gives the volume to the image's non-root user. TLS and HTTPS redirects are Fly's; `/health` is its health check. Deploys stop the old Machine before starting the new one (a volume attaches to one Machine), so there are a few seconds of downtime, which apps ride out on their cached flags.
+
+Constraints that keep moving off Fly easy:
 
 - one Docker image, Linux, all config from environment variables
 - runs as a single instance, with SQLite on a persistent disk
 - **SSE (v1.1) needs a long-lived process.** Hosts that scale to zero, or bill for open connections, get worse once streaming arrives.
 
-Candidates to price out: Fly.io, Oracle Cloud's free tier, Google Cloud Run (needs a fix for SQLite on its temporary disk, e.g. Litestream), or hardware at home behind Cloudflare Tunnel.
+*Considered:* Oracle Cloud's free tier, Google Cloud Run (needs a fix for SQLite on its temporary disk, e.g. Litestream), or hardware at home behind Cloudflare Tunnel.
+
+Not done yet: backups beyond Fly's daily volume snapshots, and per-IP limits for evaluation (see **Rate limiting**).
 
 ## Status and roadmap
 
@@ -423,7 +427,7 @@ CI (`.github/workflows/ci.yml`) runs `swift test` on every push to `main` and on
 
 ### Left for v1
 
-1. **Pick a host and deploy.** See **Deployment** and **Open questions**.
+1. **Deploy.** `fly.toml` is ready (see **Deployment**); the first `just fly-setup` and `just fly-deploy` are left.
 2. **Try it on a Mac by hand.** CI builds and tests on macOS, but nobody has opened the package in Xcode or used the CLI from a Mac yet.
 
 ### Known gaps (fine for now; fix if they start to hurt)
@@ -443,7 +447,7 @@ CI (`.github/workflows/ci.yml`) runs `swift test` on every push to `main` and on
 
 ## Open questions
 
-1. **Hosting** (see **Deployment**). The cheapest option that keeps a long-lived process (needed for SSE in v1.1) wins.
+Nothing open right now.
 
 ## Clients
 

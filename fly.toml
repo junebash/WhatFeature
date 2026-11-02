@@ -1,0 +1,32 @@
+# Fly.io app: one Machine running the Docker image, with SQLite on a volume. See "Deploy to Fly.io" in the README.
+# The app name is global on Fly; change it if it's taken.
+
+app = "whatfeature"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "Dockerfile"
+
+# The image sets HOST, PORT and DATABASE_PATH. Fly gives the volume to the image's user (whatfeature).
+[mounts]
+  source = "whatfeature_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Always on: one instance (in-memory caches and rate limits), and SSE will need a long-lived process.
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/health"
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "10s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

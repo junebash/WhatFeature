@@ -4,7 +4,7 @@
 
 A small feature flag service written in Swift. Flags are evaluated on the server and served over the [OpenFeature Remote Evaluation Protocol (OFREP)](https://github.com/open-feature/protocol), so any OpenFeature SDK with an OFREP provider can use it. Swift apps can use the small `WhatFeatureFlags` library instead (see "Use flags in an app" below).
 
-Status: early, but usable end to end: OFREP evaluation, an admin API and CLI, SQLite storage, tokens, and an audit log. No UI. Still to do for v1: a host. CI tests every push on Linux and macOS, and builds and starts the Docker image. The full list is under "Status and roadmap" in [`docs/DESIGN.md`](docs/DESIGN.md), along with the design and the full admin API.
+Status: early, but usable end to end: OFREP evaluation, an admin API and CLI, SQLite storage, tokens, and an audit log. No UI. Deploys to Fly.io (see below). CI tests every push on Linux and macOS, and builds and starts the Docker image. The full list is under "Status and roadmap" in [`docs/DESIGN.md`](docs/DESIGN.md), along with the design and the full admin API.
 
 ## Try it
 
@@ -69,6 +69,19 @@ just docker-token
 ```
 
 The image runs the server on port 8080, with its SQLite database on the `/data` volume (`whatfeature-data` in the recipe). Settings are the environment variables below; `HOST`, `PORT` and `DATABASE_PATH` are already set for the container. `just docker-token` creates an admin token inside the running container; then `just login` works the same as without Docker. `just docker-reset` deletes the container and its data.
+
+### Deploy to Fly.io
+
+Needs [`flyctl`](https://fly.io/docs/flyctl/install/), logged in (`fly auth login`). Settings are in [`fly.toml`](fly.toml): one always-on Machine in `sjc`, with the database on a 1 GB volume. The app name is global on Fly, so change `app` there if `whatfeature` is taken.
+
+```bash
+just fly-setup    # once: creates the app and its volume
+just fly-deploy   # builds the image and deploys it
+just fly-token    # prints an admin token from the Machine
+just cli login --url https://whatfeature.fly.dev
+```
+
+Other settings (such as `RATE_LIMIT_ADMIN`) go in an `[env]` section in `fly.toml`. Deploying again keeps the data; the Machine is down for a few seconds while it restarts.
 
 ## Manage flags
 
