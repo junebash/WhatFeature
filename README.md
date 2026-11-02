@@ -83,7 +83,7 @@ just cli login --url https://whatfeature.fly.dev
 
 Other settings (such as `RATE_LIMIT_ADMIN`) go in an `[env]` section in `fly.toml`. Deploying again keeps the data; the Machine is down for a few seconds while it restarts. Once it's set up, CI deploys every push to `main` that passes; it needs a `FLY_API_TOKEN` repository secret (`fly tokens create deploy`).
 
-Prebuilt CLI binaries for Linux and macOS are on the [releases page](https://github.com/junebash/WhatFeature/releases). To cut one: `just release 0.1.0`.
+Prebuilt CLI binaries for Linux (x86_64, glibc 2.38 or newer such as Ubuntu 24.04, plus `libsqlite3-0`) and macOS are on the [releases page](https://github.com/junebash/WhatFeature/releases). To cut one: `just release 0.1.0`.
 
 ## Manage flags
 

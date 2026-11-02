@@ -7,7 +7,7 @@ on:
 
 jobs:
   # Same build as the Dockerfile: the Swift runtime is linked in statically. Still needs SQLite and libstdc++ from
-  # the system (on Ubuntu: `apt install libsqlite3-0`).
+  # the system, and glibc 2.38+ (Ubuntu 24.04 or newer, `apt install libsqlite3-0`).
   linux:
     runs-on: ubuntu-latest
     container: swift:6.4.2-noble
