@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/junebash/WhatFeature/actions/workflows/ci.yml/badge.svg)](https://github.com/junebash/WhatFeature/actions/workflows/ci.yml)
 
-A small feature flag service written in Swift. Flags are evaluated on the server and served over the [OpenFeature Remote Evaluation Protocol (OFREP)](https://github.com/open-feature/protocol), so any OpenFeature SDK with an OFREP provider can use it.
+A small feature flag service written in Swift. Flags are evaluated on the server and served over the [OpenFeature Remote Evaluation Protocol (OFREP)](https://github.com/open-feature/protocol), so any OpenFeature SDK with an OFREP provider can use it. Swift apps can use the small `WhatFeatureFlags` library instead (see "Use flags in an app" below).
 
 Status: early, but usable end to end: OFREP evaluation, an admin API and CLI, SQLite storage, tokens, and an audit log. No UI. Still to do for v1: a host. CI tests every push on Linux and macOS, and builds and starts the Docker image. The full list is under "Status and roadmap" in [`docs/DESIGN.md`](docs/DESIGN.md), along with the design and the full admin API.
 
@@ -142,6 +142,27 @@ swift run whatfeature tokens create --name "iOS app" -e dev
 
 `swift run whatfeature --help` lists every command, and every command has `--help`. Read commands take `--json`. The admin API underneath is documented in [`docs/DESIGN.md`](docs/DESIGN.md).
 
+## Use flags in an app
+
+Add this package and depend on the `WhatFeatureFlags` product. It needs only Foundation, so it works in iOS apps (iOS 18+) and server-side Swift:
+
+```swift
+import WhatFeatureCore
+import WhatFeatureFlags
+
+let client = FlagClient(baseURL: URL(string: "https://flags.example.com")!, token: "wf_eval_…", session: .shared)
+let context = EvaluationContext(targetingKey: userID, attributes: ["appVersion": "2.1"])
+var flags = try await client.fetch(context: context)
+
+if flags.bool("new-onboarding", default: false) { … }
+let greeting = flags.string("greeting", default: "Hello")
+
+// Later: cheap when nothing changed (the server answers 304 and you get `flags` back).
+flags = try await client.fetch(context: context, previous: flags)
+```
+
+Every getter takes your default and returns it when the flag is off, missing, or of another type. `Flags` is `Codable`, so you can save it and use it on the next launch before the network answers.
+
 ## Settings
 
 Server:
@@ -168,4 +189,4 @@ CLI (flag, else env, else what `login` saved):
 swift test
 ```
 
-The live OFREP tests use [our fork of `swift-ofrep`](https://github.com/junebash/swift-ofrep), the server-side Swift OFREP provider: upstream can't send a token yet. See "Clients" in the design doc.
+The live tests run a real server on a real port and read it with the admin client, the `whatfeature` binary, and `FlagClient`.

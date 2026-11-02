@@ -1,5 +1,5 @@
 {
-  "originHash" : "154051da40cef8e33fbdcf10afbdc33a31f3749e08c0a8ac048abff9f9618e95",
+  "originHash" : "3559ae414f8464eed8d0e7b1b87d8f760ededf13bf2c9714ca8f1c5e65d9fa4a",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -206,42 +206,6 @@
       "state" : {
         "revision" : "0c0290ff6b24942dadb83a929ffaaa1481df04a2",
         "version" : "1.1.1"
-      }
-    },
-    {
-      "identity" : "swift-ofrep",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/junebash/swift-ofrep.git",
-      "state" : {
-        "branch" : "main",
-        "revision" : "6bb966efe4e2c2445a5483fff87c7b2b09be82ff"
-      }
-    },
-    {
-      "identity" : "swift-open-feature",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/swift-open-feature/swift-open-feature.git",
-      "state" : {
-        "branch" : "main",
-        "revision" : "17c86233c49a598d86ac07a569aad1390c516847"
-      }
-    },
-    {
-      "identity" : "swift-openapi-async-http-client",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/swift-server/swift-openapi-async-http-client.git",
-      "state" : {
-        "revision" : "3681f659d9417652b8119f0adbdf57c04b6cb292",
-        "version" : "1.5.0"
-      }
-    },
-    {
-      "identity" : "swift-openapi-runtime",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-openapi-runtime.git",
-      "state" : {
-        "revision" : "6927ad435adf4d00fe55fc61b9a07a04673c79c8",
-        "version" : "1.13.3"
       }
     },
     {

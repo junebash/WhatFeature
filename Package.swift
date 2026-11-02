@@ -13,12 +13,14 @@ let swiftSettings: [SwiftSetting] = [
 
 let package = Package(
     name: "WhatFeature",
-    platforms: [.macOS(.v15)],
+    platforms: [.macOS(.v15), .iOS(.v18)],
     products: [
         .library(name: "WhatFeatureCore", targets: ["WhatFeatureCore"]),
         .library(name: "WhatFeatureStorage", targets: ["WhatFeatureStorage"]),
         .library(name: "WhatFeatureServer", targets: ["WhatFeatureServer"]),
         .library(name: "WhatFeatureClient", targets: ["WhatFeatureClient"]),
+        // For apps: flag values over OFREP. Needs only Core and Foundation, so it builds for iOS.
+        .library(name: "WhatFeatureFlags", targets: ["WhatFeatureFlags"]),
         .executable(name: "whatfeature", targets: ["whatfeature"]),
     ],
     dependencies: [
@@ -30,11 +32,6 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-log.git", from: "1.6.0"),
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.0"),
         .package(url: "https://github.com/swift-server/async-http-client.git", from: "1.26.0"),
-        // Test only: a real OFREP client, to check apps can read our responses. Our fork of
-        // swift-open-feature/swift-ofrep adds `headerFields:` for sending a token, and fixes the build against
-        // current swift-open-feature. Neither has a release; Package.resolved pins the commits.
-        .package(url: "https://github.com/junebash/swift-ofrep.git", branch: "main"),
-        .package(url: "https://github.com/swift-open-feature/swift-open-feature.git", branch: "main"),
         // Test only: runs the built CLI. Its paths are `FilePath`, from `System` on Apple platforms and
         // swift-system's `SystemPackage` elsewhere, so tests that build one depend on swift-system directly.
         .package(url: "https://github.com/swiftlang/swift-subprocess.git", from: "1.0.2"),
@@ -71,6 +68,11 @@ let package = Package(
                 .product(name: "NIOHTTP1", package: "swift-nio"),
                 .product(name: "NIOFoundationCompat", package: "swift-nio"),
             ],
+            swiftSettings: swiftSettings
+        ),
+        .target(
+            name: "WhatFeatureFlags",
+            dependencies: ["WhatFeatureCore"],
             swiftSettings: swiftSettings
         ),
         .target(
@@ -143,12 +145,10 @@ let package = Package(
             name: "WhatFeatureIntegrationTests",
             dependencies: [
                 "WhatFeatureCore",
+                "WhatFeatureFlags",
                 "WhatFeatureServer",
                 "WhatFeatureStorage",
                 .product(name: "HummingbirdTesting", package: "hummingbird"),
-                .product(name: "HTTPTypes", package: "swift-http-types"),
-                .product(name: "OFREP", package: "swift-ofrep"),
-                .product(name: "OpenFeature", package: "swift-open-feature"),
                 .product(name: "Subprocess", package: "swift-subprocess"),
                 .product(name: "SystemPackage", package: "swift-system", condition: .when(platforms: [.linux])),
             ],

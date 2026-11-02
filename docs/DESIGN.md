@@ -38,7 +38,7 @@ It is also a learning project: the point is to understand how a flag service wor
 ## Architecture
 
 ```
-          apps (OpenFeature SDK + OFREP provider)        me (whatfeature CLI)
+          apps (WhatFeatureFlags, or any OFREP client)   me (whatfeature CLI)
                          │                                     │
               POST /ofrep/v1/evaluate/...            /admin/v1/...
                          │                                     │
@@ -72,12 +72,13 @@ Tokens are *not* cached: each request does one indexed lookup. So a token revoke
 | `WhatFeatureAPI` | library | Admin API request/response types and `AdminPaths` (every path and query name), shared by server and client so they can't drift apart. |
 | `WhatFeatureServer` | library | Hummingbird app, OFREP and admin routes, token middleware, ETags. |
 | `WhatFeatureClient` | library | `AdminClient`: a typed client for the admin API (AsyncHTTPClient). |
+| `WhatFeatureFlags` | library | `FlagClient`: what apps use to get flag values (see **Clients**). Depends only on Core and Foundation, so it builds for iOS. |
 | `whatfeature` | executable | The server (`serve`) and the admin CLI (see **CLI**). Migrations run automatically whenever the database opens. |
 
 **Live tests.** Most server tests hand requests straight to the router (fast, no socket). These run a real server on a real port:
 
 - `WhatFeatureClientTests`: the admin client, over HTTP.
-- `WhatFeatureIntegrationTests`, OFREP: read by `swift-ofrep`, a real OpenFeature provider, so we find out if a real client disagrees with our hand-written JSON.
+- `WhatFeatureIntegrationTests`, flags: `FlagClient` reading a live server, the way an app does.
 - `WhatFeatureIntegrationTests`, CLI: the built `whatfeature` binary, run as a separate process the way it's used from a terminal (`login`, a flag from creation to deletion, `evaluate --app-json`, failures). Each test gets an empty config directory and a clean environment. `swift test` builds the binary; the tests find it in `.build/debug` and run it with [swift-subprocess](https://github.com/swiftlang/swift-subprocess), which waits and reads output asynchronously, so no thread blocks.
 
 ## Data model
@@ -235,7 +236,7 @@ Responses follow OFREP 0.4 (`service/openapi.yaml` in [open-feature/protocol](ht
 
 In the bulk response, each flag is one of the first three shapes, sorted by key.
 
-**Flag metadata.** Any result for a flag that exists (resolved, disabled, or an error like `TARGETING_KEY_MISSING`) can carry OFREP's `metadata`: a flat object of strings, numbers and booleans. OpenFeature SDKs pass it to hooks as flag metadata, so an exposure-logging hook can check `experiment` and log only A/B tests. `swift-ofrep` reads it.
+**Flag metadata.** Any result for a flag that exists (resolved, disabled, or an error like `TARGETING_KEY_MISSING`) can carry OFREP's `metadata`: a flat object of strings, numbers and booleans. OpenFeature SDKs pass it to hooks as flag metadata, so an exposure-logging hook can check `experiment` and log only A/B tests. `FlagClient` exposes it as `Flag.isExperiment`.
 
 - Today the only key is `experiment: true`, on flags marked `isExperiment`.
 - Keys are only sent when they say something: other flags get no `metadata` at all, rather than `{"experiment": false}`. That keeps responses small and the common shapes unchanged. Hooks should treat a missing key as `false`.
@@ -388,7 +389,7 @@ So:
   - **Over the limit → `429`** with `Retry-After` in whole seconds and `{"error": "Too many requests. Try again in N seconds."}`. Logged at `notice` with the token ID, never the secret.
 - **Evaluation tokens: the server never limits them.** **Per-IP limits belong in the proxy in front of the server** (e.g. Cloudflare rate-limiting rules if we use Cloudflare Tunnel). Decide when the host is chosen. An abused token gets revoked and replaced (`whatfeature tokens revoke`).
 
-*Considered:* an opt-in per-token evaluation limit. It was built, then removed: it's the very thing the services above avoid, and it would likely never be turned on. If it's ever needed, it's in the git history (commit `364e653`). Note for that day: OFREP's spec gives `Retry-After` as an ISO 8601 date, and `swift-ofrep` can't read plain seconds.
+*Considered:* an opt-in per-token evaluation limit. It was built, then removed: it's the very thing the services above avoid, and it would likely never be turned on. If it's ever needed, it's in the git history (commit `364e653`). Note for that day: OFREP's spec gives `Retry-After` as an ISO 8601 date, not seconds.
 
 ## Deployment
 
@@ -410,6 +411,7 @@ CI (`.github/workflows/ci.yml`) runs `swift test` on every push to `main` and on
 - **OFREP:** single and bulk evaluation, bearer or `X-API-Key` tokens, ETag / `304`, disabled flags as "code default" results.
 - **Storage:** SQLite (GRDB) with migrations, an in-memory snapshot cache, revocable hashed tokens, an audit log written in the same transaction as each change, and an idempotent seed file (`examples/seed.json`).
 - **Admin API:** projects, environments, flags (create, update, archive, delete), per-environment configs, dry-run evaluation, tokens, audit log, `me`.
+- **App client:** `FlagClient` in `WhatFeatureFlags` (see **Clients**).
 - **CLI:** every admin task, through the admin API (see **CLI**), plus `db token` for bootstrapping.
 - **A/B assignment:** sticky rollouts, plus the `isExperiment` marker on flags, sent to apps as OFREP flag metadata (`"experiment": true`).
 - **CI:** `swift test` on Linux and macOS, and a job that builds the Docker image, starts it, and checks the admin API and OFREP answer.
@@ -428,7 +430,6 @@ CI (`.github/workflows/ci.yml`) runs `swift test` on every push to `main` and on
 - Environments created *after* a flag get the sorted-first variant as their default, even if the flag was created with `--default`.
 - **To do: a regex operator** (see **Operators**): `matches`, e.g. `email matches "^[^@]+@(acme|acme-corp)\.com$"`. Needs a `Sendable` wrapper around Swift's `Regex`, compiled once when the snapshot loads, and validation of the pattern on save.
 - Nothing limits evaluation requests, or requests without a valid token, until a proxy in front of the server limits by IP (see **Rate limiting**). That waits on the host.
-- Integer vs. float numbers (see **Open questions**).
 
 ### Later
 
@@ -441,15 +442,11 @@ CI (`.github/workflows/ci.yml`) runs `swift test` on every push to `main` and on
 ## Open questions
 
 1. **Hosting** (see **Deployment**). The cheapest option that keeps a long-lived process (needed for SSE in v1.1) wins.
-2. **Integer vs. float.** OFREP has separate integer and float value types; we have one `number`. JSON can't tell `0` from `0.0`, so a whole-number value always goes out as an integer. Upstream `swift-ofrep` then gave `TYPE_MISMATCH` to an app asking for a `Double`; our fork accepts it (live test `wholeNumberAsDouble`). Asking for an `Int` and getting `2.5` is still a mismatch, which is right. Leaning towards keeping one `number` type. Other clients (the iOS SDK's OFREP provider) aren't checked yet.
 
 ## Clients
 
-- **Server-side Swift:** [`swift-ofrep`](https://github.com/swift-open-feature/swift-ofrep) (built on `swift-open-feature`) uses the single-flag endpoint. **Upstream doesn't work with WhatFeature; use [our fork](https://github.com/junebash/swift-ofrep)**, which the live tests also use. Upstream (7 stars, no releases, last code change March 2025) has four problems the fork fixes:
-  1. **No way to send a token.** The fork adds `OFREPProvider(serverURL:headerFields:)`, e.g. `headerFields: [.authorization: "Bearer wf_eval_…"]`.
-  2. **It doesn't build** against current `swift-open-feature`, which made Service Lifecycle an opt-in trait.
-  3. **It predates OFREP's "code default" result** (August 2025), so a disabled flag came back as an error instead of the app's default.
-  4. **A whole number asked for as a `Double`** (e.g. `0`) was a type mismatch. JSON has one number type, so that's a valid `Double`.
+**Apps use `FlagClient`** (the `WhatFeatureFlags` library): one call, `fetch(context:previous:)`, gets every flag from the bulk endpoint. Passing the previous result sends its ETag, so an unchanged environment and context costs a `304` and hands the previous result back. The result, `Flags`, is a `Codable` value with typed getters (`bool`, `string`, `int`, `double`, `json`) that take the app's default and return it for anything disabled, failed, missing or of the wrong type. An app can save it and use it on the next launch before the network answers. It needs only Foundation's `URLSession`, so the same code works in iOS apps and server-side Swift.
 
-  Each is its own commit, ready to offer upstream as a pull request.
-- **iOS / Apple platforms:** the OpenFeature Swift SDK ([open-feature/swift-sdk](https://github.com/open-feature/swift-sdk)) with an OFREP provider for static contexts. That provider uses the bulk endpoint. One exists in go-feature-flag's Swift provider; check whether it is usable on its own.
+**One `number` type.** OFREP has separate integer and float types, but JSON can't tell `0` from `0.0`, so a whole number always goes out looking like an integer. `double` accepts any number; `int` accepts whole numbers only, and `2.5` gives the default.
+
+**Why not the OpenFeature SDKs?** The server still speaks OFREP, so any OpenFeature SDK with an OFREP provider works (JavaScript, Go, Java and Kotlin, Python, .NET). For Swift, though, they cost more than they gave. Server-side [`swift-ofrep`](https://github.com/swift-open-feature/swift-ofrep) needed a fork with four fixes to work at all (sending a token, building against current `swift-open-feature`, OFREP's "code default" results, whole numbers as `Double`). The iOS provider, [`ofrep-swift-client-provider`](https://github.com/open-feature/ofrep-swift-client-provider), has three commits. And swapping flag vendors, the SDKs' main promise, doesn't matter when you run your own. A small client of our own, tested against the real server, replaced the fork (dropped November 2026). Where OFREP gets in the way, we can add our own endpoint rather than bending to the spec.
