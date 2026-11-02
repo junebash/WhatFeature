@@ -288,3 +288,52 @@ extension MetadataTests {
         }
     }
 }
+
+@Suite struct CORSTests {
+    private let origin: HTTPFields = [.origin: "https://whatdo.example"]
+
+    @Test(arguments: ["/ofrep/v1/evaluate/flags", "/ofrep/v1/evaluate/flags/new-onboarding"])
+    func preflight(_ path: String) async throws {
+        let app = buildApplication(store: try await makeStore())
+        try await app.test(.router) { client in
+            var headers = origin
+            headers[.accessControlRequestMethod] = "POST"
+            headers[.accessControlRequestHeaders] = "authorization, content-type, if-none-match"
+            try await client.execute(uri: path, method: .options, headers: headers) { response in
+                #expect(response.status == .noContent)
+                #expect(response.headers[.accessControlAllowOrigin] == "*")
+                #expect(response.headers[.accessControlAllowMethods] == "POST")
+                let allowed = Set((response.headers[.accessControlAllowHeaders] ?? "").lowercased().split(separator: ", "))
+                #expect(allowed.isSuperset(of: ["authorization", "content-type", "if-none-match"]))
+            }
+        }
+    }
+
+    @Test func responsesExposeETag() async throws {
+        let app = buildApplication(store: try await makeStore())
+        try await app.test(.router) { client in
+            var headers = origin
+            headers[.authorization] = "Bearer \(token)"
+            let reply = try await post(client, "/ofrep/v1/evaluate/flags", #"{"context": {}}"#, headers: headers)
+            #expect(reply.status == .ok)
+            #expect(reply.headers[.accessControlAllowOrigin] == "*")
+            #expect(reply.headers[.accessControlExposeHeaders] == "ETag")
+
+            // A browser has to be able to read a 401 too, to tell a bad token from a network error.
+            let unauthorized = try await post(client, "/ofrep/v1/evaluate/flags", #"{"context": {}}"#, headers: origin)
+            #expect(unauthorized.status == .unauthorized)
+            #expect(unauthorized.headers[.accessControlAllowOrigin] == "*")
+        }
+    }
+
+    @Test func adminHasNoCORS() async throws {
+        let app = buildApplication(store: try await makeStore())
+        try await app.test(.router) { client in
+            var headers = origin
+            headers[.accessControlRequestMethod] = "GET"
+            try await client.execute(uri: "/admin/v1/me", method: .options, headers: headers) { response in
+                #expect(response.headers[.accessControlAllowOrigin] == nil)
+            }
+        }
+    }
+}

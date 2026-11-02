@@ -261,6 +261,14 @@ A changed context or a changed flag produces a new ETag. We can answer `304` wit
 
 Environment versions are stored in the database, so ETags stay valid across restarts. A throwaway `:memory:` database gets new environment IDs on every start, so its ETags never collide with older ones either.
 
+**Browsers (CORS).** Web apps (like the WhatDo PWA) call the OFREP endpoints straight from the browser, so they answer CORS:
+
+- **Any origin** (`Access-Control-Allow-Origin: *`). Evaluation tokens are public and read-only anyway (see **Auth and tokens**); an origin list would protect nothing and need updating for every new app. No credentials mode: the token is a header, not a cookie.
+- **Preflights** (`OPTIONS` with `Origin`) get `204` without a token check, allowing `POST` and the headers `Authorization`, `X-API-Key`, `Content-Type` and `If-None-Match`, cached for a day (`Access-Control-Max-Age: 86400`; browsers cap it lower).
+- **Responses**, `401`s and `304`s included, carry `Access-Control-Allow-Origin: *` and `Access-Control-Expose-Headers: ETag`, so the app can read the ETag and send it back.
+- **The admin API has no CORS.** Admin tokens are secrets; no browser page should hold one.
+- Hummingbird's `CORSMiddleware` isn't used: it sends `Access-Control-Expose-Headers` only on preflights, where browsers ignore it.
+
 ### Admin (`/admin/v1`)
 
 Auth: `Authorization: Bearer wf_admin_…` (or `X-API-Key`). A missing, unknown or revoked token gets `401`; an evaluation token gets `403`. Projects and environments are addressed by **key** in paths; tokens by ID.
@@ -416,7 +424,7 @@ CI (`.github/workflows/ci.yml`) runs `swift test` on every push to `main` and on
 ### Done
 
 - **Core:** flag model, typed rules and operators, semver, sticky SHA-256 bucketing, evaluation with OFREP reasons, validation.
-- **OFREP:** single and bulk evaluation, bearer or `X-API-Key` tokens, ETag / `304`, disabled flags as "code default" results.
+- **OFREP:** single and bulk evaluation, bearer or `X-API-Key` tokens, ETag / `304`, disabled flags as "code default" results, CORS for browser apps.
 - **Storage:** SQLite (GRDB) with migrations, an in-memory snapshot cache, revocable hashed tokens, an audit log written in the same transaction as each change, and an idempotent seed file (`examples/seed.json`).
 - **Admin API:** projects, environments, flags (create, update, archive, delete), per-environment configs, dry-run evaluation, tokens, audit log, `me`.
 - **App client:** `FlagClient` in `WhatFeatureFlags` (see **Clients**).

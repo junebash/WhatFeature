@@ -17,6 +17,11 @@ struct OFREPRoutes {
     func register(on group: RouterGroup<Context>) {
         group.post("evaluate/flags/{key}", use: evaluateFlag)
         group.post("evaluate/flags", use: evaluateAll)
+        // Group middleware only runs on a matched route, so preflights need one. OFREPCORSMiddleware answers
+        // them before the token check; an OPTIONS without `Origin` isn't a preflight and goes through it.
+        for path in ["evaluate/flags/{key}", "evaluate/flags"] {
+            group.on(RouterPath(path), method: .options) { _, _ in HTTPResponse.Status.noContent }
+        }
     }
 
     @Sendable func evaluateFlag(_ request: Request, context: Context) async throws -> Response {

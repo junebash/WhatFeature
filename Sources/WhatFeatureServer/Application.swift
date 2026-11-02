@@ -16,7 +16,11 @@ public func buildApplication(
     router.get("health") { _, _ in "ok" }
 
     // Never rate limited: evaluation tokens are shared by every install. See "Rate limiting" in DESIGN.md.
-    let ofrep = router.group("ofrep/v1").add(middleware: EvaluationTokenMiddleware(store: store))
+    // CORS sits outside the token check, so preflights (which carry no token) pass and 401s are readable.
+    // The admin API gets no CORS.
+    let ofrep = router.group("ofrep/v1")
+        .add(middleware: OFREPCORSMiddleware())
+        .add(middleware: EvaluationTokenMiddleware(store: store))
     OFREPRoutes(store: store).register(on: ofrep)
 
     let admin = router.group(RouterPath(AdminPaths.prefix))
