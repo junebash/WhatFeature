@@ -72,7 +72,7 @@ Tokens are *not* cached: each request does one indexed lookup. So a token revoke
 | `WhatFeatureAPI` | library | Admin API request/response types and `AdminPaths` (every path and query name), shared by server and client so they can't drift apart. |
 | `WhatFeatureServer` | library | Hummingbird app, OFREP and admin routes, token middleware, ETags. |
 | `WhatFeatureClient` | library | `AdminClient`: a typed client for the admin API (AsyncHTTPClient). |
-| `WhatFeatureFlags` | library | `FlagClient`: what apps use to get flag values (see **Clients**). Depends only on Core and Foundation, so it builds for iOS. |
+| `WhatFeatureFlags` | library | `FlagClient` and `FlagCache`: what apps use to get flag values (see **Clients**). Depends only on Core, Foundation and swift-crypto, so it builds for iOS. |
 | `whatfeature` | executable | The server (`serve`) and the admin CLI (see **CLI**). Migrations run automatically whenever the database opens. |
 
 **Live tests.** Most server tests hand requests straight to the router (fast, no socket). These run a real server on a real port:
@@ -445,7 +445,9 @@ CI (`.github/workflows/ci.yml`) runs `swift test` on every push to `main` and on
 
 ## Clients
 
-**Apps use `FlagClient`** (the `WhatFeatureFlags` library): one call, `fetch(context:previous:)`, gets every flag from the bulk endpoint. Passing the previous result sends its ETag, so an unchanged environment and context costs a `304` and hands the previous result back. The result, `Flags`, is a `Codable` value with typed getters (`bool`, `string`, `int`, `double`, `json`) that take the app's default and return it for anything disabled, failed, missing or of the wrong type. An app can save it and use it on the next launch before the network answers. It needs only Foundation's `URLSession`, so the same code works in iOS apps and server-side Swift.
+**Apps use `FlagClient`** (the `WhatFeatureFlags` library): one call, `fetch(context:previous:)`, gets every flag from the bulk endpoint. Passing the previous result sends its ETag, so an unchanged environment and context costs a `304` and hands the previous result back. The result, `Flags`, is a `Codable` value with typed getters (`bool`, `string`, `int`, `double`, `json`) that take the app's default and return it for anything disabled, failed, missing or of the wrong type. It needs only Foundation's `URLSession`, so the same code works in iOS apps and server-side Swift.
+
+**Optional local cache**, modeled on LaunchDarkly's iOS SDK: `FlagClient(…, cache: FlagCache(directory:))`. The cache keeps one entry per environment (token) and targeting key. Every successful fetch writes its entry, a failed fetch leaves it alone, and only the `maxContexts` most recently written are kept (5 by default, as in LaunchDarkly). `cachedFlags(for:)` reads it at launch, before the network. `fetch` with no `previous` sends the cached ETag, so an unchanged environment costs a `304`. If the same user's other attributes changed, the cached flags are still returned but without their ETag, so the next fetch gets fresh values (LaunchDarkly's "fingerprint" check). Entries are JSON files named by a SHA-256 of token and targeting key, so no user ID appears in a file name. Files, not `UserDefaults`: 10,000 flags is about a megabyte, and `UserDefaults` loads everything at launch. Not copied (yet): LaunchDarkly's start timeout and its change observers.
 
 **One `number` type.** OFREP has separate integer and float types, but JSON can't tell `0` from `0.0`, so a whole number always goes out looking like an integer. `double` accepts any number; `int` accepts whole numbers only, and `2.5` gives the default.
 

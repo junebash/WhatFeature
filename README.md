@@ -144,7 +144,7 @@ swift run whatfeature tokens create --name "iOS app" -e dev
 
 ## Use flags in an app
 
-Add this package and depend on the `WhatFeatureFlags` product. It needs only Foundation, so it works in iOS apps (iOS 18+) and server-side Swift:
+Add this package and depend on the `WhatFeatureFlags` product. It needs only Foundation (and swift-crypto), so it works in iOS apps (iOS 18+) and server-side Swift:
 
 ```swift
 import WhatFeatureCore
@@ -161,7 +161,17 @@ let greeting = flags.string("greeting", default: "Hello")
 flags = try await client.fetch(context: context, previous: flags)
 ```
 
-Every getter takes your default and returns it when the flag is off, missing, or of another type. `Flags` is `Codable`, so you can save it and use it on the next launch before the network answers.
+Every getter takes your default and returns it when the flag is off, missing, or of another type.
+
+To have values at launch and offline, give the client a cache. Every successful fetch is saved, and the next launch starts from the saved flags (and gets a cheap `304` if nothing changed):
+
+```swift
+let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+let client = FlagClient(baseURL: url, token: "wf_eval_…", session: .shared, cache: FlagCache(directory: caches.appending(path: "WhatFeature")))
+
+var flags = client.cachedFlags(for: context) ?? Flags(flags: [])  // right away, no network
+flags = try await client.fetch(context: context)                   // then fresh values, saved for next time
+```
 
 ## Settings
 

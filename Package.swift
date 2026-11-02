@@ -19,7 +19,7 @@ let package = Package(
         .library(name: "WhatFeatureStorage", targets: ["WhatFeatureStorage"]),
         .library(name: "WhatFeatureServer", targets: ["WhatFeatureServer"]),
         .library(name: "WhatFeatureClient", targets: ["WhatFeatureClient"]),
-        // For apps: flag values over OFREP. Needs only Core and Foundation, so it builds for iOS.
+        // For apps: flag values over OFREP. Needs only Core, Foundation and swift-crypto, so it builds for iOS.
         .library(name: "WhatFeatureFlags", targets: ["WhatFeatureFlags"]),
         .executable(name: "whatfeature", targets: ["whatfeature"]),
     ],
@@ -72,7 +72,7 @@ let package = Package(
         ),
         .target(
             name: "WhatFeatureFlags",
-            dependencies: ["WhatFeatureCore"],
+            dependencies: ["WhatFeatureCore", .product(name: "Crypto", package: "swift-crypto")],
             swiftSettings: swiftSettings
         ),
         .target(
