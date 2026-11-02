@@ -138,6 +138,8 @@ Give an app its evaluation token:
 swift run whatfeature tokens create --name "iOS app" -e dev
 ```
 
+`login` saves the URL, token and project to `~/.config/whatfeature/config.json` (or under `$XDG_CONFIG_HOME`), readable only by you; `whatfeature logout` removes them.
+
 `swift run whatfeature --help` lists every command, and every command has `--help`. Read commands take `--json`. The admin API underneath is documented in [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Settings

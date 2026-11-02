@@ -38,7 +38,7 @@ cli-binary:
     if [[ -x {{bin}} ]] && [[ -z "$(find Sources Package.swift Package.resolved -newer {{bin}} -print -quit)" ]]; then
         exit 0
     fi
-    echo "Building the CLI…" >&2
+    echo "Building the CLI (a minute or two the first time)…" >&2
     swift build --product whatfeature
     # A build with nothing to do leaves the binary's date alone; mark it current so the next check passes.
     touch {{bin}}
@@ -47,20 +47,20 @@ cli-binary:
 
 # Create an admin token in the dev database and print it. Do this once, before `just serve`.
 token name="dev": cli-binary
-    {{bin}} db token create --admin --name "{{name}}" --database {{dev_db}}
+    @{{bin}} db token create --admin --name "{{name}}" --database {{dev_db}}
 
 # Run the server on dev.sqlite, with the example project and flags loaded. Stop it with Ctrl-C.
 serve: cli-binary
-    {{bin}} serve --database {{dev_db}} --seed examples/seed.json --port {{port}}
+    @{{bin}} serve --database {{dev_db}} --seed examples/seed.json --port {{port}}
 
 # Point the CLI at the local server (Docker or not) and save your admin token. It asks for the token.
 login: cli-binary
-    {{bin}} login --url {{url}} --project demo
+    @{{bin}} login --url {{url}} --project demo
 
 # Run any CLI command, e.g. `just cli flags list` or `just cli evaluate --all -e dev --targeting-key june`
 [positional-arguments]
 cli *args: cli-binary
-    {{bin}} "$@"
+    @{{bin}} "$@"
 
 # What an app gets for every flag, asked the way an app asks (OFREP, with the dev evaluation token)
 app-flags targeting_key="june":

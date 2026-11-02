@@ -1,6 +1,7 @@
 import ArgumentParser
 import Foundation
 import Hummingbird
+import NIOCore
 import NIOPosix
 import WhatFeatureServer
 import WhatFeatureStorage
@@ -57,7 +58,11 @@ struct Serve: AsyncParsableCommand {
             configuration: .init(address: .hostname(host, port: port), serverName: "WhatFeature"),
             adminRateLimit: rateLimit
         )
-        try await app.runService()
+        do {
+            try await app.runService()
+        } catch let error as IOError where error.errnoCode == EADDRINUSE {
+            throw CLIError("Port \(port) is already in use. Stop the other server or pick another with --port.")
+        }
     }
 }
 

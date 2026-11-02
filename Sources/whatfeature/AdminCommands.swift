@@ -29,7 +29,7 @@ struct Login: AsyncParsableCommand {
             try await writeLine("Admin token:", terminator: " ")
             secret = try await context.terminal.readLine()?.trimmingCharacters(in: .whitespaces)
         }
-        guard let secret, !secret.isEmpty else { throw ValidationError("No token given.") }
+        guard let secret, !secret.isEmpty else { throw CLIError("No token given.") }
 
         let client = try await ConnectionOptions(url: url, token: secret).makeClient()
         let me = try await withServer(client) { try await $0.me() }
