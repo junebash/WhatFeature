@@ -144,7 +144,15 @@ swift run whatfeature tokens create --name "iOS app" -e dev
 
 ## Use flags in an app
 
-Add this package and depend on the `WhatFeatureFlags` product. It needs only Foundation (and swift-crypto), so it works in iOS apps (iOS 18+) and server-side Swift:
+Add this package with its default trait off, so you fetch only what the client needs (swift-crypto), not the server's dependencies:
+
+```swift
+.package(url: "https://github.com/junebash/WhatFeature.git", branch: "main", traits: []),
+// in your target:
+.product(name: "WhatFeatureFlags", package: "WhatFeature"),
+```
+
+ It needs only Foundation (and swift-crypto), so it works in iOS apps (iOS 18+) and server-side Swift:
 
 ```swift
 import WhatFeatureCore

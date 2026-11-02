@@ -23,6 +23,9 @@ let package = Package(
         .library(name: "WhatFeatureFlags", targets: ["WhatFeatureFlags"]),
         .executable(name: "whatfeature", targets: ["whatfeature"]),
     ],
+    // Apps that only want `WhatFeatureFlags` turn the default trait off, `traits: []`, and fetch swift-crypto
+    // and nothing else. Every other dependency is only for the server, CLI and admin client.
+    traits: [.default(enabledTraits: ["Server"]), "Server"],
     dependencies: [
         .package(url: "https://github.com/apple/swift-crypto.git", from: "5.0.0"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.8.0"),
@@ -48,7 +51,7 @@ let package = Package(
             dependencies: [
                 "WhatFeatureCore",
                 .product(name: "Crypto", package: "swift-crypto"),
-                .product(name: "GRDB", package: "GRDB.swift"),
+                .product(name: "GRDB", package: "GRDB.swift", condition: .when(traits: ["Server"])),
             ],
             swiftSettings: swiftSettings
         ),
@@ -63,10 +66,10 @@ let package = Package(
                 "WhatFeatureAPI",
                 "WhatFeatureCore",
                 "WhatFeatureStorage",
-                .product(name: "AsyncHTTPClient", package: "async-http-client"),
-                .product(name: "NIOCore", package: "swift-nio"),
-                .product(name: "NIOHTTP1", package: "swift-nio"),
-                .product(name: "NIOFoundationCompat", package: "swift-nio"),
+                .product(name: "AsyncHTTPClient", package: "async-http-client", condition: .when(traits: ["Server"])),
+                .product(name: "NIOCore", package: "swift-nio", condition: .when(traits: ["Server"])),
+                .product(name: "NIOHTTP1", package: "swift-nio", condition: .when(traits: ["Server"])),
+                .product(name: "NIOFoundationCompat", package: "swift-nio", condition: .when(traits: ["Server"])),
             ],
             swiftSettings: swiftSettings
         ),
@@ -82,11 +85,11 @@ let package = Package(
                 "WhatFeatureCore",
                 "WhatFeatureStorage",
                 .product(name: "Crypto", package: "swift-crypto"),
-                .product(name: "Hummingbird", package: "hummingbird"),
-                .product(name: "HTTPTypes", package: "swift-http-types"),
-                .product(name: "Logging", package: "swift-log"),
-                .product(name: "NIOCore", package: "swift-nio"),
-                .product(name: "NIOFoundationCompat", package: "swift-nio"),
+                .product(name: "Hummingbird", package: "hummingbird", condition: .when(traits: ["Server"])),
+                .product(name: "HTTPTypes", package: "swift-http-types", condition: .when(traits: ["Server"])),
+                .product(name: "Logging", package: "swift-log", condition: .when(traits: ["Server"])),
+                .product(name: "NIOCore", package: "swift-nio", condition: .when(traits: ["Server"])),
+                .product(name: "NIOFoundationCompat", package: "swift-nio", condition: .when(traits: ["Server"])),
             ],
             swiftSettings: swiftSettings
         ),
@@ -98,11 +101,11 @@ let package = Package(
                 "WhatFeatureCore",
                 "WhatFeatureServer",
                 "WhatFeatureStorage",
-                .product(name: "ArgumentParser", package: "swift-argument-parser"),
-                .product(name: "AsyncHTTPClient", package: "async-http-client"),
-                .product(name: "Hummingbird", package: "hummingbird"),
-                .product(name: "NIOCore", package: "swift-nio"),
-                .product(name: "NIOPosix", package: "swift-nio"),
+                .product(name: "ArgumentParser", package: "swift-argument-parser", condition: .when(traits: ["Server"])),
+                .product(name: "AsyncHTTPClient", package: "async-http-client", condition: .when(traits: ["Server"])),
+                .product(name: "Hummingbird", package: "hummingbird", condition: .when(traits: ["Server"])),
+                .product(name: "NIOCore", package: "swift-nio", condition: .when(traits: ["Server"])),
+                .product(name: "NIOPosix", package: "swift-nio", condition: .when(traits: ["Server"])),
             ],
             swiftSettings: swiftSettings
         ),

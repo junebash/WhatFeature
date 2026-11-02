@@ -75,6 +75,8 @@ Tokens are *not* cached: each request does one indexed lookup. So a token revoke
 | `WhatFeatureFlags` | library | `FlagClient` and `FlagCache`: what apps use to get flag values (see **Clients**). Depends only on Core, Foundation and swift-crypto, so it builds for iOS. |
 | `whatfeature` | executable | The server (`serve`) and the admin CLI (see **CLI**). Migrations run automatically whenever the database opens. |
 
+**One package, one trait.** Every dependency except swift-crypto is used only by the server, CLI and admin client, and each is behind the `Server` trait (on by default). An app that adds the package with `traits: []` fetches swift-crypto and swift-asn1 and nothing else, instead of 26 packages, because SwiftPM skips dependencies only disabled traits need. With the trait off, only `WhatFeatureCore` and `WhatFeatureFlags` build. *Considered:* a separate client package or repo; the trait gets the same result without moving code or versioning two packages.
+
 **Live tests.** Most server tests hand requests straight to the router (fast, no socket). These run a real server on a real port:
 
 - `WhatFeatureClientTests`: the admin client, over HTTP.
