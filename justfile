@@ -128,3 +128,10 @@ fly-token name="fly":
 # Follow the app's logs
 fly-logs:
     fly logs
+
+# --- Releases ---
+
+# Tag main as v<version> and push the tag; CI builds the Linux and macOS CLI and makes the GitHub release
+release version:
+    git tag "v{{version}}"
+    git push origin "v{{version}}"

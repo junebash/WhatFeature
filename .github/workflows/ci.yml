@@ -6,10 +6,11 @@ on:
   pull_request:
   workflow_dispatch:
 
-# A newer push to the same branch cancels the run that's still going.
+# A newer push to the same branch cancels the run that's still going, except on main, where it waits so a
+# deploy is never cut off halfway.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   # Where the server runs. Same Swift version as development so far.
@@ -66,3 +67,17 @@ jobs:
       - name: Container logs
         if: always()
         run: docker logs whatfeature || true
+
+  # Every push to main that passes the jobs above goes to Fly. Same as `just fly-deploy`, but the image is built
+  # here rather than on Fly's remote builder. Needs the FLY_API_TOKEN secret (`fly tokens create deploy`).
+  deploy:
+    needs: [linux, macos, docker]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: superfly/flyctl-actions/setup-flyctl@1.5
+      - run: flyctl deploy --ha=false --local-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

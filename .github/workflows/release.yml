@@ -1,0 +1,44 @@
+name: Release
+
+# Pushing a tag like v0.1.0 (`just release 0.1.0`) makes a GitHub release with the CLI built for Linux and macOS.
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  # Same build as the Dockerfile: the Swift runtime is linked in statically. Still needs SQLite and libstdc++ from
+  # the system (on Ubuntu: `apt install libsqlite3-0`).
+  linux:
+    runs-on: ubuntu-latest
+    container: swift:6.4.2-noble
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - run: apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev
+      - run: swift build -c release --product whatfeature --static-swift-stdlib
+      - run: tar -czf whatfeature-linux-x86_64.tar.gz -C "$(swift build -c release --show-bin-path)" whatfeature
+      - uses: actions/upload-artifact@v7
+        with: { name: linux, path: whatfeature-linux-x86_64.tar.gz }
+
+  # One binary for Apple silicon and Intel. Not signed or notarized.
+  macos:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - run: swift build -c release --product whatfeature --arch arm64 --arch x86_64
+      - run: tar -czf whatfeature-macos-universal.tar.gz -C "$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)" whatfeature
+      - uses: actions/upload-artifact@v7
+        with: { name: macos, path: whatfeature-macos-universal.tar.gz }
+
+  release:
+    needs: [linux, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with: { merge-multiple: true }
+      - run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --generate-notes whatfeature-*.tar.gz
+        env:
+          GH_TOKEN: ${{ github.token }}

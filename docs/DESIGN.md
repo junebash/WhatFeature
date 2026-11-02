@@ -395,7 +395,9 @@ So:
 
 ## Deployment
 
-**Fly.io** ([`fly.toml`](../fly.toml), `just fly-*` recipes). One Machine, always on (no auto-stop, so it suits SSE later), shared CPU with 256 MB, SQLite on a 1 GB Fly volume at `/data`. Fly builds the same Docker image and gives the volume to the image's non-root user. TLS and HTTPS redirects are Fly's; `/health` is its health check. Deploys stop the old Machine before starting the new one (a volume attaches to one Machine), so there are a few seconds of downtime, which apps ride out on their cached flags.
+**Fly.io** ([`fly.toml`](../fly.toml), `just fly-*` recipes). One Machine, always on (no auto-stop, so it suits SSE later), shared CPU with 256 MB, SQLite on a 1 GB Fly volume at `/data`. Fly builds the same Docker image and gives the volume to the image's non-root user. TLS and HTTPS redirects are Fly's; `/health` is its health check. Deploys stop the old Machine before starting the new one (a volume attaches to one Machine), so there are a few seconds of downtime, which apps ride out on their cached flags. CI deploys every push to `main` once the tests and the Docker check pass (it builds the image itself, so Fly's remote builder isn't involved).
+
+**Releases** are git tags (`just release 0.1.0` pushes `v0.1.0`). CI attaches the CLI to the GitHub release: Linux x86_64 (Swift runtime static, needs the system's SQLite) and a macOS universal binary, unsigned.
 
 Constraints that keep moving off Fly easy:
 
