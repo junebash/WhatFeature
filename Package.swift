@@ -112,6 +112,11 @@ let package = Package(
             swiftSettings: swiftSettings
         ),
         .testTarget(
+            name: "WhatFeatureFlagsTests",
+            dependencies: ["WhatFeatureCore", "WhatFeatureFlags"],
+            swiftSettings: swiftSettings
+        ),
+        .testTarget(
             name: "WhatFeatureStorageTests",
             dependencies: ["WhatFeatureCore", "WhatFeatureStorage"],
             swiftSettings: swiftSettings

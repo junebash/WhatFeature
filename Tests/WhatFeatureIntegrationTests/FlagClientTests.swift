@@ -40,7 +40,6 @@ private let seed = """
 /// Runs the server on a free port and hands the test a client pointed at it, plus the store for changing flags.
 private func withClient(
     token: String = token,
-    cache: FlagCache? = nil,
     _ test: @Sendable (FlagClient, SQLiteStore) async throws -> Void
 ) async throws {
     let store = try SQLiteStore.inMemory()
@@ -49,7 +48,7 @@ private func withClient(
         let port = try #require(client.port)
         // "localhost", not 127.0.0.1: see the note in AdminClientTests.
         let url = try #require(URL(string: "http://localhost:\(port)"))
-        try await test(FlagClient(baseURL: url, token: token, session: .shared, cache: cache), store)
+        try await test(FlagClient(baseURL: url, token: token, session: .shared), store)
     }
 }
 
@@ -135,65 +134,6 @@ private func withClient(
             let flags = try await client.fetch(context: EvaluationContext(targetingKey: "june"))
             let saved = try JSONDecoder().decode(Flags.self, from: try JSONEncoder().encode(flags))
             #expect(saved == flags)
-        }
-    }
-
-    @Test func cacheServesTheLastFlagsPerEnvironmentAndUser() async throws {
-        let directory = FileManager.default.temporaryDirectory.appending(path: "whatfeature-cache-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let cache = FlagCache(directory: directory, maxContexts: 2)
-        let us = EvaluationContext(targetingKey: "june", attributes: ["country": "US"])
-
-        try await withClient(cache: cache) { client, _ in
-            #expect(client.cachedFlags(for: us) == nil)
-            let fetched = try await client.fetch(context: us)
-            #expect(client.cachedFlags(for: us) == fetched)
-
-            // Same user, changed attributes: the old values are the best guess, but not trusted for a 304.
-            let movedAway = client.cachedFlags(for: EvaluationContext(targetingKey: "june", attributes: ["country": "DE"]))
-            #expect(movedAway?.bool("new-onboarding", default: false) == true)
-            #expect(movedAway?.etag == nil)
-
-            // Another environment's token has its own entries.
-            var otherEnvironment = client
-            otherEnvironment.token = "wf_eval_other"
-            #expect(otherEnvironment.cachedFlags(for: us) == nil)
-
-            // Only the newest `maxContexts` users are kept.
-            _ = try await client.fetch(context: EvaluationContext(targetingKey: "a"))
-            _ = try await client.fetch(context: EvaluationContext(targetingKey: "b"))
-            #expect(client.cachedFlags(for: us) == nil)
-            #expect(client.cachedFlags(for: EvaluationContext(targetingKey: "b")) != nil)
-        }
-
-        // A new launch: a client with no server still has the last flags.
-        let offline = FlagClient(baseURL: URL(string: "http://localhost:9")!, token: token, session: .shared, cache: cache)
-        #expect(offline.cachedFlags(for: EvaluationContext(targetingKey: "b"))?.string("greeting", default: "Hey") == "Hi")
-        await #expect(throws: (any Error).self) { try await offline.fetch(context: EvaluationContext(targetingKey: "b")) }
-        #expect(offline.cachedFlags(for: EvaluationContext(targetingKey: "b")) != nil, "a failed fetch keeps the cache")
-    }
-
-    /// With a cache, the cached flags' ETag goes along, so an unchanged environment answers 304 and the
-    /// cached flags come back as they are.
-    @Test func cacheMakesTheFirstFetchCheap() async throws {
-        let directory = FileManager.default.temporaryDirectory.appending(path: "whatfeature-cache-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let context = EvaluationContext(targetingKey: "june")
-
-        try await withClient(cache: FlagCache(directory: directory)) { client, _ in
-            _ = try await client.fetch(context: context)
-
-            // Drop a flag from the saved file, keeping its ETag. Only a 304 can hand that back.
-            let file = try #require(try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).first)
-            var entry = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
-            var flags = try #require(entry["flags"] as? [String: Any])
-            flags["flags"] = (flags["flags"] as? [[String: Any]])?.filter { $0["key"] as? String != "greeting" }
-            entry["flags"] = flags
-            try JSONSerialization.data(withJSONObject: entry).write(to: file)
-
-            let again = try await client.fetch(context: context)
-            #expect(again["greeting"] == nil)
-            #expect(again["new-onboarding"] != nil)
         }
     }
 }

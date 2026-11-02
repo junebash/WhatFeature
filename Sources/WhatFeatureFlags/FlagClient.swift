@@ -17,19 +17,32 @@ public import WhatFeatureCore
 ///
 /// With a `FlagCache`, every successful fetch is saved, and `cachedFlags(for:)` gives you the last ones at
 /// launch, before the network answers.
+///
+/// The network and the disk come in from outside (`send`, `FlagCache.Storage`); everything else is plain
+/// functions of their results, so tests can use fakes for both.
 public struct FlagClient: Sendable {
     /// e.g. `https://flags.example.com`.
     public var baseURL: URL
     /// An evaluation token (`wf_eval_…`). It picks the project and environment. Treat it as public.
     public var token: String
     public var cache: FlagCache?
-    private let session: URLSession
+    /// Sends one request: `URLSession` in apps, a fake in tests.
+    public var send: @Sendable (URLRequest) async throws -> (Data, URLResponse)
 
     public init(baseURL: URL, token: String, session: URLSession, cache: FlagCache? = nil) {
+        self.init(baseURL: baseURL, token: token, cache: cache) { try await session.data(for: $0) }
+    }
+
+    public init(
+        baseURL: URL,
+        token: String,
+        cache: FlagCache? = nil,
+        send: @escaping @Sendable (URLRequest) async throws -> (Data, URLResponse)
+    ) {
         self.baseURL = baseURL
         self.token = token
-        self.session = session
         self.cache = cache
+        self.send = send
     }
 
     /// The flags the cache last saved for this context's targeting key, or `nil` (no cache, nothing saved,
@@ -46,33 +59,47 @@ public struct FlagClient: Sendable {
         if previous == nil, cache != nil {
             previous = await onFileQueue { cachedFlags(for: context) }
         }
+        let (data, response) = try await send(try request(context: context, etag: previous?.etag))
+        guard let flags = try Self.flags(from: data, response: response) else {
+            guard let previous else { throw FlagClientError(status: 304, body: "Not modified, but there's nothing earlier") }
+            return previous
+        }
+        if let cache {
+            // A cache that can't be written isn't worth failing the fetch for.
+            await onFileQueue { [token] in try? cache.save(flags, token: token, context: context) }
+        }
+        return flags
+    }
 
+    // MARK: - Pure parts: no I/O
+
+    func request(context: EvaluationContext, etag: String?) throws -> URLRequest {
         var request = URLRequest(url: baseURL.appending(path: "ofrep/v1/evaluate/flags"))
         request.httpMethod = "POST"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let etag = previous?.etag {
-            request.setValue(etag, forHTTPHeaderField: "If-None-Match")
-        }
+        if let etag { request.setValue(etag, forHTTPHeaderField: "If-None-Match") }
         request.httpBody = try JSONEncoder().encode(["context": context])
+        return request
+    }
 
-        let (data, response) = try await session.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        if status == 304, let previous { return previous }
-        guard status == 200 else {
+    /// The flags in a response, or `nil` for `304 Not Modified`.
+    static func flags(from data: Data, response: URLResponse) throws -> Flags? {
+        let http = response as? HTTPURLResponse
+        switch http?.statusCode ?? 0 {
+        case 304:
+            return nil
+        case 200:
+            var flags = try JSONDecoder().decode(Flags.self, from: data)
+            flags.etag = http?.value(forHTTPHeaderField: "ETag")
+            return flags
+        case let status:
             throw FlagClientError(status: status, body: String(decoding: data, as: UTF8.self))
         }
-        var flags = try JSONDecoder().decode(Flags.self, from: data)
-        flags.etag = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "ETag")
-        if let cache {
-            // A cache that can't be written isn't worth failing the fetch for.
-            await onFileQueue { [token, flags] in try? cache.save(flags, token: token, context: context) }
-        }
-        return flags
     }
 }
 
-/// File reads and writes block, so they run on a Dispatch queue, not Swift concurrency's shared threads.
+/// Storage reads and writes may block, so they run on a Dispatch queue, not Swift concurrency's shared threads.
 private func onFileQueue<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
     await withCheckedContinuation { continuation in
         DispatchQueue.global(qos: .utility).async { continuation.resume(returning: work()) }
