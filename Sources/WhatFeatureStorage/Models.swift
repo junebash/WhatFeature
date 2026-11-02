@@ -41,6 +41,10 @@ public struct Project: Sendable, Hashable, Codable {
     public var key: String
     public var name: String
     public var createdAt: Date
+    /// Archived projects drop out of lists, and their evaluation tokens stop working. Never deleted.
+    public var archivedAt: Date?
+
+    public var isArchived: Bool { archivedAt != nil }
 }
 
 /// One place a project runs, like `dev` or `prod`. Each flag has a separate config per environment.
@@ -53,6 +57,10 @@ public struct Environment: Sendable, Hashable, Codable {
     /// Goes up whenever any flag in the environment changes. Becomes the snapshot version, and so feeds the ETag.
     public var version: Int
     public var createdAt: Date
+    /// Like a project's: out of lists, evaluation tokens stop working, never deleted.
+    public var archivedAt: Date?
+
+    public var isArchived: Bool { archivedAt != nil }
 }
 
 public struct Token: Sendable, Hashable, Codable {

@@ -11,21 +11,23 @@ public enum AdminPaths {
     public static func project(_ project: String) -> String { "projects/\(project)" }
 
     public static func environments(_ project: String) -> String { self.project(project) + "/environments" }
+    public static func environment(_ project: String, _ environment: String) -> String { environments(project) + "/\(environment)" }
 
     public static func flags(_ project: String) -> String { self.project(project) + "/flags" }
     public static func flag(_ project: String, _ flag: String) -> String { flags(project) + "/\(flag)" }
-    public static func archive(_ project: String, _ flag: String) -> String { self.flag(project, flag) + "/archive" }
-    public static func unarchive(_ project: String, _ flag: String) -> String { self.flag(project, flag) + "/unarchive" }
+    /// For a project, an environment or a flag: `archive(flag("demo", "beta"))`.
+    public static func archive(_ path: String) -> String { path + "/archive" }
+    public static func unarchive(_ path: String) -> String { path + "/unarchive" }
 
     public static func config(_ project: String, _ environment: String, _ flag: String) -> String {
-        environments(project) + "/\(environment)/flags/\(flag)"
+        self.environment(project, environment) + "/flags/\(flag)"
     }
     public static func evaluate(_ project: String, _ environment: String, _ flag: String) -> String {
         config(project, environment, flag) + "/evaluate"
     }
     /// Every flag at once, like OFREP's bulk endpoint.
     public static func evaluateAll(_ project: String, _ environment: String) -> String {
-        environments(project) + "/\(environment)/evaluate"
+        self.environment(project, environment) + "/evaluate"
     }
 
     public static let tokens = "tokens"
@@ -43,8 +45,10 @@ public enum AdminPaths {
 
     /// Query parameter names.
     public enum Query {
+        /// For projects, environments and flags.
+        public static let includeArchived = "includeArchived"
+
         public enum Flags {
-            public static let includeArchived = "includeArchived"
             public static let createdBy = "createdBy"
             public static let sort = "sort"
             public static let order = "order"
@@ -67,8 +71,9 @@ extension AdminPaths {
     public static func environments(_ project: Parameter) -> String { environments(project.placeholder) }
     public static func flags(_ project: Parameter) -> String { flags(project.placeholder) }
     public static func flag(_ project: Parameter, _ flag: Parameter) -> String { self.flag(project.placeholder, flag.placeholder) }
-    public static func archive(_ project: Parameter, _ flag: Parameter) -> String { archive(project.placeholder, flag.placeholder) }
-    public static func unarchive(_ project: Parameter, _ flag: Parameter) -> String { unarchive(project.placeholder, flag.placeholder) }
+    public static func environment(_ project: Parameter, _ environment: Parameter) -> String {
+        self.environment(project.placeholder, environment.placeholder)
+    }
     public static func config(_ project: Parameter, _ environment: Parameter, _ flag: Parameter) -> String {
         config(project.placeholder, environment.placeholder, flag.placeholder)
     }

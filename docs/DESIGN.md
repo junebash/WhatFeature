@@ -264,9 +264,12 @@ Auth: `Authorization: Bearer wf_admin_…` (or `X-API-Key`). A missing, unknown 
 
 | Method | Path | Body / query | Returns |
 |---|---|---|---|
-| `GET` / `POST` | `/projects` | `{key, name?}` | project(s) |
-| `GET` | `/projects/{project}` | | project |
-| `GET` / `POST` | `/projects/{project}/environments` | `{key, name?}` | environment(s) |
+| `GET` / `POST` | `/projects` | `includeArchived=true` / `{key, name?}` | project(s) |
+| `GET` / `PATCH` | `/projects/{project}` | `PATCH`: either or both of `{key, name}` | project |
+| `POST` | `/projects/{project}/archive`, `/unarchive` | | project |
+| `GET` / `POST` | `/projects/{project}/environments` | `includeArchived=true` / `{key, name?}` | environment(s) |
+| `PATCH` | `/projects/{project}/environments/{env}` | either or both of `{key, name}` | environment |
+| `POST` | `/projects/{project}/environments/{env}/archive`, `/unarchive` | | environment |
 | `GET` | `/projects/{project}/flags` | `includeArchived=true`, `createdBy=token:<id>`, `sort=key\|createdAt`, `order=asc\|desc` | flags |
 | `POST` | `/projects/{project}/flags` | `{key, type, variants, description?, isExperiment?, defaultVariant?}` | flag detail |
 | `GET` | `/projects/{project}/flags/{flag}` | | flag detail |
@@ -288,7 +291,9 @@ Every admin write checks its input first (variant values match the flag type, ru
 
 **The dry run shows exactly what an app gets.** Its `ofrep` part is built by the same code as the OFREP endpoints (same evaluation call, same JSON encoder, same status), so it can't drift from them, and a test compares the two for every kind of result. It doesn't check an evaluation token: it answers for an environment, using your admin token.
 
-Not yet: renaming or deleting projects and environments, and protection against two people editing the same config at once (an `If-Match` on the config version would do it).
+**Projects and environments are renamed and archived, never deleted.** A rename can change the key, the name, or both. Apps don't notice a new key, because evaluation tokens point at environment IDs. Archiving one hides it from lists (unless `includeArchived=true`), and its evaluation tokens get `401`, the same as a deleted one would. Apps then fall back to their code defaults. It can't get new evaluation tokens either (`409`). Nothing else changes: it's still reachable by key, its flags and configs stay as they were, and unarchiving brings it all back. An archived environment's configs are left out of flag detail. A seed file that names a renamed project creates a new project with the old key. Deleting is left out because nothing needs it yet.
+
+Not yet: protection against two people editing the same config at once (an `If-Match` on the config version would do it).
 
 **One definition of every path.** `AdminPaths` (in `WhatFeatureAPI`) builds each path. The server calls it with placeholders to register routes (`AdminPaths.flag(.project, .flag)` → `projects/{project}/flags/{flag}`); the client calls it with real keys. Query parameter names live there too. Client tests run every method and query parameter against a live server.
 
@@ -311,8 +316,8 @@ The one exception is `whatfeature db token …`, which works on the file directl
 | Command | Does |
 |---|---|
 | `login` / `logout` / `whoami` | Save, forget, or show the server URL, admin token and default project |
-| `projects list\|show\|create` | |
-| `environments list\|create` (alias `envs`) | |
+| `projects list\|show\|create\|update\|archive\|unarchive` | `update --new-key/--name` renames; a saved default project follows the new key. `list --archived` includes archived ones. |
+| `environments list\|create\|update\|archive\|unarchive` (alias `envs`) | The same, within a project |
 | `flags list\|show\|create\|update\|archive\|unarchive\|delete` | `show` gives the state in every environment; `delete` asks for confirmation |
 | `config show\|set` | See or replace a whole config (JSON from a file, stdin, or `--json`) |
 | `config enable\|disable` | Flip `enabled`, keeping the rules. `disable` is the kill switch. |
@@ -417,7 +422,6 @@ CI (`.github/workflows/ci.yml`) runs `swift test` on every push to `main` and on
 
 ### Known gaps (fine for now; fix if they start to hurt)
 
-- Projects and environments can't be renamed or deleted.
 - No protection against two edits to the same config at once. An `If-Match` on the config version would do it.
 - Environments created *after* a flag get the sorted-first variant as their default, even if the flag was created with `--default`.
 - The CLI keeps its admin token in a `0600` file. The macOS Keychain would be better there.

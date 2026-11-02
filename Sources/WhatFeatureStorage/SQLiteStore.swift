@@ -65,9 +65,64 @@ public final class SQLiteStore: EvaluationStore {
         return project
     }
 
-    public func projects() async throws -> [Project] {
+    /// Sorted by key.
+    public func projects(includeArchived: Bool = false) async throws -> [Project] {
         try await database.read { db in
-            try ProjectRecord.order(Column("key")).fetchAll(db).map(\.model)
+            var request = ProjectRecord.all()
+            if !includeArchived { request = request.filter(Column("archivedAt") == nil) }
+            return try request.order(Column("key")).fetchAll(db).map(\.model)
+        }
+    }
+
+    /// What `updateProject` and `updateEnvironment` can change. `nil` leaves a field as it is. Changing a key
+    /// changes admin paths, but not evaluation: tokens point at IDs.
+    public struct NameChanges: Sendable, Hashable, Codable {
+        public var key: String?
+        public var name: String?
+
+        public init(key: String? = nil, name: String? = nil) {
+            self.key = key
+            self.name = name
+        }
+    }
+
+    @discardableResult
+    public func updateProject(_ projectID: ProjectID, changes: NameChanges, by actor: AuditActor) async throws -> Project {
+        if let key = changes.key { try Self.requireValidKey(key, kind: "Project") }
+        return try await database.write { db in
+            guard var record = try ProjectRecord.fetchOne(db, key: projectID.rawValue) else {
+                throw StoreError.notFound("No project with ID '\(projectID)'")
+            }
+            let before = record.model
+            if let key = changes.key, key != record.key {
+                if try ProjectRecord.filter(Column("key") == key).fetchCount(db) > 0 {
+                    throw StoreError.conflict("A project with key '\(key)' already exists")
+                }
+                record.key = key
+            }
+            if let name = changes.name { record.name = name }
+            guard record.model != before else { return before }
+            try record.update(db)
+            try self.audit(db, actor, "project.update", project: projectID, before: before, after: record.model)
+            return record.model
+        }
+    }
+
+    /// Doing nothing (archiving an archived project) isn't recorded.
+    @discardableResult
+    public func setArchived(_ archived: Bool, project projectID: ProjectID, by actor: AuditActor) async throws -> Project {
+        try await database.write { db in
+            guard var record = try ProjectRecord.fetchOne(db, key: projectID.rawValue) else {
+                throw StoreError.notFound("No project with ID '\(projectID)'")
+            }
+            guard (record.archivedAt != nil) != archived else { return record.model }
+            let before = record.model
+            record.archivedAt = archived ? self.now() : nil
+            try record.update(db)
+            try self.audit(
+                db, actor, archived ? "project.archive" : "project.unarchive", project: projectID, before: before, after: record.model
+            )
+            return record.model
         }
     }
 
@@ -100,9 +155,56 @@ public final class SQLiteStore: EvaluationStore {
         return environment
     }
 
-    public func environments(in projectID: ProjectID) async throws -> [Environment] {
+    /// Sorted by key.
+    public func environments(in projectID: ProjectID, includeArchived: Bool = false) async throws -> [Environment] {
         try await database.read { db in
-            try EnvironmentRecord.filter(Column("projectID") == projectID.rawValue).order(Column("key")).fetchAll(db).map(\.model)
+            var request = EnvironmentRecord.filter(Column("projectID") == projectID.rawValue)
+            if !includeArchived { request = request.filter(Column("archivedAt") == nil) }
+            return try request.order(Column("key")).fetchAll(db).map(\.model)
+        }
+    }
+
+    @discardableResult
+    public func updateEnvironment(_ environmentID: EnvironmentID, changes: NameChanges, by actor: AuditActor) async throws -> Environment {
+        if let key = changes.key { try Self.requireValidKey(key, kind: "Environment") }
+        return try await database.write { db in
+            guard var record = try EnvironmentRecord.fetchOne(db, key: environmentID.rawValue) else {
+                throw StoreError.notFound("No environment with ID '\(environmentID)'")
+            }
+            let before = record.model
+            if let key = changes.key, key != record.key {
+                if try EnvironmentRecord.filter(Column("projectID") == record.projectID && Column("key") == key).fetchCount(db) > 0 {
+                    throw StoreError.conflict("An environment with key '\(key)' already exists in this project")
+                }
+                record.key = key
+            }
+            if let name = changes.name { record.name = name }
+            guard record.model != before else { return before }
+            try record.update(db)
+            try self.audit(
+                db, actor, "environment.update",
+                project: before.projectID, environment: environmentID, before: before, after: record.model
+            )
+            return record.model
+        }
+    }
+
+    /// Doing nothing (archiving an archived environment) isn't recorded.
+    @discardableResult
+    public func setArchived(_ archived: Bool, environment environmentID: EnvironmentID, by actor: AuditActor) async throws -> Environment {
+        try await database.write { db in
+            guard var record = try EnvironmentRecord.fetchOne(db, key: environmentID.rawValue) else {
+                throw StoreError.notFound("No environment with ID '\(environmentID)'")
+            }
+            guard (record.archivedAt != nil) != archived else { return record.model }
+            let before = record.model
+            record.archivedAt = archived ? self.now() : nil
+            try record.update(db)
+            try self.audit(
+                db, actor, archived ? "environment.archive" : "environment.unarchive",
+                project: before.projectID, environment: environmentID, before: before, after: record.model
+            )
+            return record.model
         }
     }
 
@@ -362,6 +464,9 @@ public final class SQLiteStore: EvaluationStore {
                 guard let environment = try EnvironmentRecord.fetchOne(db, key: environmentID.rawValue) else {
                     throw StoreError.notFound("No environment with ID '\(environmentID)'")
                 }
+                guard try Self.isLive(environmentID, db) else {
+                    throw StoreError.conflict("Environment '\(environment.key)' or its project is archived")
+                }
                 projectID = ProjectID(environment.projectID)
             }
             try record.insert(db)
@@ -472,8 +577,11 @@ public final class SQLiteStore: EvaluationStore {
     // MARK: - EvaluationStore
 
     public func environment(forTokenHash tokenHash: String) async throws -> EnvironmentID? {
-        guard let token = try await authenticate(tokenHash: tokenHash), token.kind == .evaluation else { return nil }
-        return token.environmentID
+        guard let token = try await authenticate(tokenHash: tokenHash), token.kind == .evaluation,
+              let environmentID = token.environmentID,
+              try await database.read({ db in try Self.isLive(environmentID, db) })
+        else { return nil }
+        return environmentID
     }
 
     public func snapshot(for environment: EnvironmentID) async throws -> EnvironmentSnapshot {
@@ -529,6 +637,14 @@ public final class SQLiteStore: EvaluationStore {
         if try !ProjectRecord.exists(db, key: projectID.rawValue) {
             throw StoreError.notFound("No project with ID '\(projectID)'")
         }
+    }
+
+    /// The environment and its project both exist and aren't archived.
+    private static func isLive(_ environmentID: EnvironmentID, _ db: Database) throws -> Bool {
+        try Bool.fetchOne(db, sql: """
+            SELECT 1 FROM environment JOIN project ON project.id = environment.projectID
+            WHERE environment.id = ? AND environment.archivedAt IS NULL AND project.archivedAt IS NULL
+            """, arguments: [environmentID.rawValue]) ?? false
     }
 
     private static func environmentIDs(in projectID: ProjectID, _ db: Database) throws -> [EnvironmentID] {

@@ -154,6 +154,36 @@ extension JSONValue {
             #expect(detail?["configs"]?["dev"]?["enabled"] == false)
         }
     }
+
+    @Test func renameAndArchive() async throws {
+        let admin = try await Admin.make()
+        try await buildApplication(store: admin.store).test(.router) { client in
+            try await admin.setUp(client)
+            let token = try await admin.expect(
+                client, .post, "/admin/v1/tokens", #"{"kind": "evaluation", "name": "app", "project": "demo", "environment": "dev"}"#,
+                status: .created
+            )?["secret"]?.stringValue ?? ""
+            let evaluate = { try await admin.send(client, .post, "/ofrep/v1/evaluate/flags", #"{"context": {}}"#, token: token).status }
+
+            let project = try await admin.expect(client, .patch, "/admin/v1/projects/demo", #"{"key": "app", "name": "App"}"#, status: .ok)
+            #expect(project?["key"] == "app")
+            let environment = try await admin.expect(client, .patch, "/admin/v1/projects/app/environments/dev", #"{"key": "staging"}"#, status: .ok)
+            #expect(environment?["key"] == "staging")
+            #expect(try await evaluate() == .ok)
+
+            try await admin.expect(client, .post, "/admin/v1/projects/app/environments/staging/archive", status: .ok)
+            #expect(try await evaluate() == .unauthorized)
+            #expect(try await admin.expect(client, .get, "/admin/v1/projects/app/environments", status: .ok)?.count == 0)
+            #expect(try await admin.expect(client, .get, "/admin/v1/projects/app/environments?includeArchived=true", status: .ok)?.count == 1)
+
+            try await admin.expect(client, .post, "/admin/v1/projects/app/environments/staging/unarchive", status: .ok)
+            try await admin.expect(client, .post, "/admin/v1/projects/app/archive", status: .ok)
+            #expect(try await evaluate() == .unauthorized)
+            #expect(try await admin.expect(client, .get, "/admin/v1/projects", status: .ok)?.count == 0)
+            try await admin.expect(client, .post, "/admin/v1/projects/app/unarchive", status: .ok)
+            #expect(try await evaluate() == .ok)
+        }
+    }
 }
 
 @Suite struct AdminFlagTests {

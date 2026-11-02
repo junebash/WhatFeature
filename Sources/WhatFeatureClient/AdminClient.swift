@@ -30,8 +30,8 @@ public struct AdminClient: Sendable {
 
     // MARK: - Projects
 
-    public func projects() async throws -> [Project] {
-        try await send(.GET, AdminPaths.projects)
+    public func projects(includeArchived: Bool = false) async throws -> [Project] {
+        try await send(.GET, AdminPaths.projects, query: Self.archivedQuery(includeArchived))
     }
 
     public func project(_ key: String) async throws -> Project {
@@ -42,14 +42,36 @@ public struct AdminClient: Sendable {
         try await send(.POST, AdminPaths.projects, body: CreateProjectRequest(key: key, name: name))
     }
 
+    public func updateProject(_ key: String, changes: SQLiteStore.NameChanges) async throws -> Project {
+        try await send(.PATCH, AdminPaths.project(key), body: changes)
+    }
+
+    public func setArchived(_ archived: Bool, project: String) async throws -> Project {
+        let path = AdminPaths.project(project)
+        return try await send(.POST, archived ? AdminPaths.archive(path) : AdminPaths.unarchive(path))
+    }
+
     // MARK: - Environments
 
-    public func environments(project: String) async throws -> [WhatFeatureStorage.Environment] {
-        try await send(.GET, AdminPaths.environments(project))
+    public func environments(project: String, includeArchived: Bool = false) async throws -> [WhatFeatureStorage.Environment] {
+        try await send(.GET, AdminPaths.environments(project), query: Self.archivedQuery(includeArchived))
     }
 
     public func createEnvironment(project: String, key: String, name: String? = nil) async throws -> WhatFeatureStorage.Environment {
         try await send(.POST, AdminPaths.environments(project), body: CreateEnvironmentRequest(key: key, name: name))
+    }
+
+    public func updateEnvironment(project: String, key: String, changes: SQLiteStore.NameChanges) async throws -> WhatFeatureStorage.Environment {
+        try await send(.PATCH, AdminPaths.environment(project, key), body: changes)
+    }
+
+    public func setArchived(_ archived: Bool, project: String, environment: String) async throws -> WhatFeatureStorage.Environment {
+        let path = AdminPaths.environment(project, environment)
+        return try await send(.POST, archived ? AdminPaths.archive(path) : AdminPaths.unarchive(path))
+    }
+
+    private static func archivedQuery(_ includeArchived: Bool) -> [URLQueryItem] {
+        includeArchived ? [URLQueryItem(name: AdminPaths.Query.includeArchived, value: "true")] : []
     }
 
     // MARK: - Flags
@@ -69,7 +91,7 @@ public struct AdminClient: Sendable {
             URLQueryItem(name: AdminPaths.Query.Flags.sort, value: sort.rawValue),
             URLQueryItem(name: AdminPaths.Query.Flags.order, value: descending ? "desc" : "asc"),
         ]
-        if includeArchived { query.append(URLQueryItem(name: AdminPaths.Query.Flags.includeArchived, value: "true")) }
+        query += Self.archivedQuery(includeArchived)
         if let createdBy { query.append(URLQueryItem(name: AdminPaths.Query.Flags.createdBy, value: createdBy)) }
         return try await send(.GET, AdminPaths.flags(project), query: query)
     }
@@ -91,7 +113,8 @@ public struct AdminClient: Sendable {
     }
 
     public func setArchived(_ archived: Bool, project: String, key: String) async throws -> FlagDetail {
-        try await send(.POST, archived ? AdminPaths.archive(project, key) : AdminPaths.unarchive(project, key))
+        let path = AdminPaths.flag(project, key)
+        return try await send(.POST, archived ? AdminPaths.archive(path) : AdminPaths.unarchive(path))
     }
 
     // MARK: - Configs

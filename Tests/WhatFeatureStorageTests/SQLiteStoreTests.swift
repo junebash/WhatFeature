@@ -43,6 +43,52 @@ private func makeStore() async throws -> (SQLiteStore, Project, dev: Environment
         let config = try #require(try await store.config(flagKey: "beta", in: staging.id))
         #expect(config == FlagConfig(enabled: false, defaultResult: .variant("off"), version: 1))
     }
+
+    @Test func renamingKeepsTokensWorkingAndRejectsTakenKeys() async throws {
+        let (store, project, dev, _) = try await makeStore()
+        let token = TokenHash.of(try await store.createEvaluationToken(name: "iOS", for: dev.id, by: me).secret)
+
+        try await store.updateEnvironment(dev.id, changes: .init(key: "staging", name: "Staging"), by: me)
+        try await store.updateProject(project.id, changes: .init(key: "app"), by: me)
+        #expect(try await store.project(key: "app")?.name == "Demo")
+        #expect(try await store.environments(in: project.id).map(\.key) == ["prod", "staging"])
+        #expect(try await store.environment(forTokenHash: token) == dev.id)
+
+        await #expect(throws: StoreError.conflict("An environment with key 'prod' already exists in this project")) {
+            try await store.updateEnvironment(dev.id, changes: .init(key: "prod"), by: me)
+        }
+        try await store.createProject(key: "other", name: "Other", by: me)
+        await #expect(throws: StoreError.conflict("A project with key 'other' already exists")) {
+            try await store.updateProject(project.id, changes: .init(key: "other"), by: me)
+        }
+    }
+
+    @Test func archivingStopsEvaluationTokensUntilUnarchived() async throws {
+        let (store, project, dev, prod) = try await makeStore()
+        let devToken = TokenHash.of(try await store.createEvaluationToken(name: "dev", for: dev.id, by: me).secret)
+        let prodToken = TokenHash.of(try await store.createEvaluationToken(name: "prod", for: prod.id, by: me).secret)
+
+        try await store.setArchived(true, environment: dev.id, by: me)
+        #expect(try await store.environment(forTokenHash: devToken) == nil)
+        #expect(try await store.environment(forTokenHash: prodToken) == prod.id)
+        #expect(try await store.environments(in: project.id).map(\.key) == ["prod"])
+        #expect(try await store.environments(in: project.id, includeArchived: true).map(\.key) == ["dev", "prod"])
+        await #expect(throws: StoreError.conflict("Environment 'dev' or its project is archived")) {
+            try await store.createEvaluationToken(name: "new", for: dev.id, by: me)
+        }
+
+        try await store.setArchived(true, project: project.id, by: me)
+        #expect(try await store.environment(forTokenHash: prodToken) == nil)
+        #expect(try await store.projects().isEmpty)
+        #expect(try await store.project(key: "demo")?.isArchived == true, "still found by key, so it can be unarchived")
+
+        try await store.setArchived(false, project: project.id, by: me)
+        #expect(try await store.environment(forTokenHash: prodToken) == prod.id)
+        #expect(try await store.environment(forTokenHash: devToken) == nil, "the environment is still archived")
+        #expect(try await store.auditEntries(projectID: project.id, limit: 3).map(\.action) == [
+            "project.unarchive", "project.archive", "environment.archive",
+        ])
+    }
 }
 
 @Suite struct FlagTests {

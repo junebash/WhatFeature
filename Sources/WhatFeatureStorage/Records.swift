@@ -11,16 +11,18 @@ struct ProjectRecord: Codable, FetchableRecord, PersistableRecord {
     var key: String
     var name: String
     var createdAt: Date
+    var archivedAt: Date?
 
     init(_ project: Project) {
         id = project.id.rawValue
         key = project.key
         name = project.name
         createdAt = project.createdAt
+        archivedAt = project.archivedAt
     }
 
     var model: Project {
-        Project(id: ProjectID(id), key: key, name: name, createdAt: createdAt)
+        Project(id: ProjectID(id), key: key, name: name, createdAt: createdAt, archivedAt: archivedAt)
     }
 }
 
@@ -32,6 +34,7 @@ struct EnvironmentRecord: Codable, FetchableRecord, PersistableRecord {
     var name: String
     var version: Int
     var createdAt: Date
+    var archivedAt: Date?
 
     init(_ environment: Environment) {
         id = environment.id.rawValue
@@ -40,10 +43,14 @@ struct EnvironmentRecord: Codable, FetchableRecord, PersistableRecord {
         name = environment.name
         version = environment.version
         createdAt = environment.createdAt
+        archivedAt = environment.archivedAt
     }
 
     var model: Environment {
-        Environment(id: EnvironmentID(id), projectID: ProjectID(projectID), key: key, name: name, version: version, createdAt: createdAt)
+        Environment(
+            id: EnvironmentID(id), projectID: ProjectID(projectID), key: key, name: name, version: version, createdAt: createdAt,
+            archivedAt: archivedAt
+        )
     }
 }
 

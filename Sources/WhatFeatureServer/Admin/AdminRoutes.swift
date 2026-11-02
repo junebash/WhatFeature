@@ -21,17 +21,23 @@ struct AdminRoutes {
         group.get(path(Paths.projects), use: listProjects)
         group.post(path(Paths.projects), use: createProject)
         group.get(path(Paths.project(.project)), use: getProject)
+        group.patch(path(Paths.project(.project)), use: updateProject)
+        group.post(path(Paths.archive(Paths.project(.project))), use: archiveProject)
+        group.post(path(Paths.unarchive(Paths.project(.project))), use: unarchiveProject)
 
         group.get(path(Paths.environments(.project)), use: listEnvironments)
         group.post(path(Paths.environments(.project)), use: createEnvironment)
+        group.patch(path(Paths.environment(.project, .environment)), use: updateEnvironment)
+        group.post(path(Paths.archive(Paths.environment(.project, .environment))), use: archiveEnvironment)
+        group.post(path(Paths.unarchive(Paths.environment(.project, .environment))), use: unarchiveEnvironment)
 
         group.get(path(Paths.flags(.project)), use: listFlags)
         group.post(path(Paths.flags(.project)), use: createFlag)
         group.get(path(Paths.flag(.project, .flag)), use: getFlag)
         group.patch(path(Paths.flag(.project, .flag)), use: updateFlag)
         group.delete(path(Paths.flag(.project, .flag)), use: deleteFlag)
-        group.post(path(Paths.archive(.project, .flag)), use: archiveFlag)
-        group.post(path(Paths.unarchive(.project, .flag)), use: unarchiveFlag)
+        group.post(path(Paths.archive(Paths.flag(.project, .flag))), use: archiveFlag)
+        group.post(path(Paths.unarchive(Paths.flag(.project, .flag))), use: unarchiveFlag)
 
         group.get(path(Paths.config(.project, .environment, .flag)), use: getConfig)
         group.put(path(Paths.config(.project, .environment, .flag)), use: setConfig)
@@ -53,8 +59,9 @@ struct AdminRoutes {
 
     // MARK: - Projects
 
+    /// Query: `includeArchived=true`.
     @Sendable func listProjects(_ request: Request, context: Context) async throws -> Response {
-        try .json(try await store.projects(), status: .ok)
+        try .json(try await store.projects(includeArchived: request.includeArchived), status: .ok)
     }
 
     @Sendable func createProject(_ request: Request, context: Context) async throws -> Response {
@@ -67,11 +74,27 @@ struct AdminRoutes {
         try .json(try await project(context), status: .ok)
     }
 
+    /// Body: either or both of `key` and `name`.
+    @Sendable func updateProject(_ request: Request, context: Context) async throws -> Response {
+        let project = try await project(context)
+        let changes = try await request.decodeJSON(SQLiteStore.NameChanges.self)
+        return try .json(try await store.updateProject(project.id, changes: changes, by: context.actor), status: .ok)
+    }
+
+    @Sendable func archiveProject(_ request: Request, context: Context) async throws -> Response {
+        try .json(try await store.setArchived(true, project: try await project(context).id, by: context.actor), status: .ok)
+    }
+
+    @Sendable func unarchiveProject(_ request: Request, context: Context) async throws -> Response {
+        try .json(try await store.setArchived(false, project: try await project(context).id, by: context.actor), status: .ok)
+    }
+
     // MARK: - Environments
 
+    /// Query: `includeArchived=true`.
     @Sendable func listEnvironments(_ request: Request, context: Context) async throws -> Response {
         let project = try await project(context)
-        return try .json(try await store.environments(in: project.id), status: .ok)
+        return try .json(try await store.environments(in: project.id, includeArchived: request.includeArchived), status: .ok)
     }
 
     @Sendable func createEnvironment(_ request: Request, context: Context) async throws -> Response {
@@ -81,13 +104,30 @@ struct AdminRoutes {
         return try .json(environment, status: .created)
     }
 
+    /// Body: either or both of `key` and `name`.
+    @Sendable func updateEnvironment(_ request: Request, context: Context) async throws -> Response {
+        let (_, environment) = try await projectAndEnvironment(context)
+        let changes = try await request.decodeJSON(SQLiteStore.NameChanges.self)
+        return try .json(try await store.updateEnvironment(environment.id, changes: changes, by: context.actor), status: .ok)
+    }
+
+    @Sendable func archiveEnvironment(_ request: Request, context: Context) async throws -> Response {
+        let (_, environment) = try await projectAndEnvironment(context)
+        return try .json(try await store.setArchived(true, environment: environment.id, by: context.actor), status: .ok)
+    }
+
+    @Sendable func unarchiveEnvironment(_ request: Request, context: Context) async throws -> Response {
+        let (_, environment) = try await projectAndEnvironment(context)
+        return try .json(try await store.setArchived(false, environment: environment.id, by: context.actor), status: .ok)
+    }
+
     // MARK: - Flags
 
     /// Query: `includeArchived=true`, `createdBy=token:<id>`, `sort=key|createdAt`, `order=asc|desc`.
     @Sendable func listFlags(_ request: Request, context: Context) async throws -> Response {
         let project = try await project(context)
         let query = request.uri.queryParameters
-        var flags = try await store.flags(in: project.id, includeArchived: query[Substring(AdminPaths.Query.Flags.includeArchived)] == "true")
+        var flags = try await store.flags(in: project.id, includeArchived: request.includeArchived)
         if let createdBy = query[Substring(AdminPaths.Query.Flags.createdBy)] {
             flags = flags.filter { $0.createdBy == createdBy }
         }
@@ -319,6 +359,10 @@ extension WhatFeatureRequestContext {
 }
 
 extension Request {
+    var includeArchived: Bool {
+        uri.queryParameters[Substring(AdminPaths.Query.includeArchived)] == "true"
+    }
+
     /// Admin request bodies are small; anything bigger is a mistake.
     static let maxAdminBodySize = 1_024 * 1_024
 

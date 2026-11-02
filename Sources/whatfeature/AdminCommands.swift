@@ -80,20 +80,24 @@ struct WhoAmI: AsyncParsableCommand {
 struct ProjectsCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "projects",
-        abstract: "List and create projects.",
-        subcommands: [List.self, Show.self, Create.self],
+        abstract: "List, create, rename and archive projects. Projects are never deleted.",
+        subcommands: [List.self, Show.self, Create.self, Update.self, Archive.self, Unarchive.self],
         defaultSubcommand: List.self
     )
 
     struct List: AsyncParsableCommand {
         @OptionGroup var connection: ConnectionOptions
         @OptionGroup var output: OutputOptions
+        @Flag(help: "Include archived projects.") var archived = false
 
         func run() async throws {
-            let projects = try await withServer(try await connection.makeClient()) { try await $0.projects() }
+            let projects = try await withServer(try await connection.makeClient()) { try await $0.projects(includeArchived: archived) }
             if output.json { return try await printJSON(projects) }
             if projects.isEmpty { return try await writeLine("No projects.") }
-            try await printTable(["KEY", "NAME", "CREATED"], projects.map { [$0.key, $0.name, format($0.createdAt)] })
+            try await printTable(
+                ["KEY", "NAME", "CREATED", "STATE"],
+                projects.map { [$0.key, $0.name, format($0.createdAt), $0.isArchived ? "archived" : ""] }
+            )
         }
     }
 
@@ -108,7 +112,7 @@ struct ProjectsCommand: AsyncParsableCommand {
                 (try await client.project(key), try await client.environments(project: key))
             }
             if output.json { return try await printJSON(project) }
-            try await writeLine("\(project.key): \(project.name)")
+            try await writeLine("\(project.key): \(project.name)" + (project.isArchived ? " · archived" : ""))
             try await writeLine("Environments: " + (environments.isEmpty ? "none" : environments.map(\.key).joined(separator: ", ")))
         }
     }
@@ -125,6 +129,58 @@ struct ProjectsCommand: AsyncParsableCommand {
             try await writeLine("Created project \(project.key). Next: `whatfeature environments create dev -p \(project.key)`")
         }
     }
+
+    struct Update: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Rename a project: its key, its display name, or both.",
+            discussion: "Apps keep working: evaluation tokens point at environments, not keys. A saved default project follows the new key."
+        )
+
+        @OptionGroup var connection: ConnectionOptions
+        @OptionGroup var output: OutputOptions
+        @Argument(help: "Project key.") var key: String
+        @Option(help: "New key.") var newKey: String?
+        @Option(help: "New display name.") var name: String?
+
+        func run() async throws {
+            guard newKey != nil || name != nil else { throw ValidationError("Nothing to change. Pass --new-key or --name.") }
+            let project = try await withServer(try await connection.makeClient()) {
+                try await $0.updateProject(key, changes: SQLiteStore.NameChanges(key: newKey, name: name))
+            }
+            let context = CLIContext.current
+            var settings = await context.loadSettings()
+            if project.key != key, settings.project == key {
+                settings.project = project.key
+                try await context.saveSettings(settings)
+            }
+            if output.json { return try await printJSON(project) }
+            try await writeLine("\(project.key): \(project.name)")
+        }
+    }
+
+    struct Archive: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Archive a project: it drops out of lists and its evaluation tokens stop working (401). Nothing is deleted."
+        )
+
+        @OptionGroup var connection: ConnectionOptions
+        @Argument(help: "Project key.") var key: String
+
+        func run() async throws {
+            _ = try await withServer(try await connection.makeClient()) { try await $0.setArchived(true, project: key) }
+            try await writeLine("Archived \(key). Apps using its tokens now get their own defaults.")
+        }
+    }
+
+    struct Unarchive: AsyncParsableCommand {
+        @OptionGroup var connection: ConnectionOptions
+        @Argument(help: "Project key.") var key: String
+
+        func run() async throws {
+            _ = try await withServer(try await connection.makeClient()) { try await $0.setArchived(false, project: key) }
+            try await writeLine("Unarchived \(key). Its tokens work again.")
+        }
+    }
 }
 
 // MARK: - Environments
@@ -132,8 +188,8 @@ struct ProjectsCommand: AsyncParsableCommand {
 struct EnvironmentsCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "environments",
-        abstract: "List and create environments.",
-        subcommands: [List.self, Create.self],
+        abstract: "List, create, rename and archive environments. Environments are never deleted.",
+        subcommands: [List.self, Create.self, Update.self, Archive.self, Unarchive.self],
         defaultSubcommand: List.self,
         aliases: ["envs"]
     )
@@ -142,13 +198,19 @@ struct EnvironmentsCommand: AsyncParsableCommand {
         @OptionGroup var connection: ConnectionOptions
         @OptionGroup var project: ProjectOption
         @OptionGroup var output: OutputOptions
+        @Flag(help: "Include archived environments.") var archived = false
 
         func run() async throws {
             let projectKey = try await project.resolve()
-            let environments = try await withServer(try await connection.makeClient()) { try await $0.environments(project: projectKey) }
+            let environments = try await withServer(try await connection.makeClient()) {
+                try await $0.environments(project: projectKey, includeArchived: archived)
+            }
             if output.json { return try await printJSON(environments) }
             if environments.isEmpty { return try await writeLine("No environments in \(projectKey).") }
-            try await printTable(["KEY", "NAME", "VERSION", "CREATED"], environments.map { [$0.key, $0.name, "v\($0.version)", format($0.createdAt)] })
+            try await printTable(
+                ["KEY", "NAME", "VERSION", "CREATED", "STATE"],
+                environments.map { [$0.key, $0.name, "v\($0.version)", format($0.createdAt), $0.isArchived ? "archived" : ""] }
+            )
         }
     }
 
@@ -168,6 +230,58 @@ struct EnvironmentsCommand: AsyncParsableCommand {
             }
             if output.json { return try await printJSON(environment) }
             try await writeLine("Created environment \(environment.key) in \(projectKey).")
+        }
+    }
+
+    struct Update: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Rename an environment: its key, its display name, or both.",
+            discussion: "Apps keep working: evaluation tokens point at the environment, not its key."
+        )
+
+        @OptionGroup var connection: ConnectionOptions
+        @OptionGroup var project: ProjectOption
+        @OptionGroup var output: OutputOptions
+        @Argument(help: "Environment key.") var key: String
+        @Option(help: "New key.") var newKey: String?
+        @Option(help: "New display name.") var name: String?
+
+        func run() async throws {
+            guard newKey != nil || name != nil else { throw ValidationError("Nothing to change. Pass --new-key or --name.") }
+            let projectKey = try await project.resolve()
+            let environment = try await withServer(try await connection.makeClient()) {
+                try await $0.updateEnvironment(project: projectKey, key: key, changes: SQLiteStore.NameChanges(key: newKey, name: name))
+            }
+            if output.json { return try await printJSON(environment) }
+            try await writeLine("\(environment.key): \(environment.name)")
+        }
+    }
+
+    struct Archive: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Archive an environment: it drops out of lists and its evaluation tokens stop working (401). Nothing is deleted."
+        )
+
+        @OptionGroup var connection: ConnectionOptions
+        @OptionGroup var project: ProjectOption
+        @Argument(help: "Environment key.") var key: String
+
+        func run() async throws {
+            let projectKey = try await project.resolve()
+            _ = try await withServer(try await connection.makeClient()) { try await $0.setArchived(true, project: projectKey, environment: key) }
+            try await writeLine("Archived \(key). Apps using its tokens now get their own defaults.")
+        }
+    }
+
+    struct Unarchive: AsyncParsableCommand {
+        @OptionGroup var connection: ConnectionOptions
+        @OptionGroup var project: ProjectOption
+        @Argument(help: "Environment key.") var key: String
+
+        func run() async throws {
+            let projectKey = try await project.resolve()
+            _ = try await withServer(try await connection.makeClient()) { try await $0.setArchived(false, project: projectKey, environment: key) }
+            try await writeLine("Unarchived \(key). Its tokens work again.")
         }
     }
 }

@@ -75,6 +75,12 @@ enum Schema {
             try db.create(index: "auditEntry_on_projectID_flagKey", on: "auditEntry", columns: ["projectID", "flagKey"])
         }
 
+        // Projects and environments are archived, never deleted.
+        migrator.registerMigration("v2-archive-projects-and-environments") { db in
+            try db.alter(table: "project") { t in t.add(column: "archivedAt", .datetime) }
+            try db.alter(table: "environment") { t in t.add(column: "archivedAt", .datetime) }
+        }
+
         return migrator
     }
 }
