@@ -423,12 +423,12 @@ CI (`.github/workflows/ci.yml`) runs `swift test` on every push to `main` and on
 - **CI:** `swift test` on Linux and macOS, and a job that builds the Docker image, starts it, and checks the admin API and OFREP answer.
 - **Docker image:** two stages, building with `swift:6.4.2-noble` and running on `ubuntu:noble` with the Swift runtime and Foundation linked statically. The binary needs only `libsqlite3`, `libstdc++`, `libgcc` and `zlib` besides libc (checked with `ldd`). Runs as a non-root user, data on the `/data` volume.
 - **`justfile`:** recipes for building, testing, running a dev server, the CLI, and the Docker image.
+- **Deployed** on Fly.io at `whatfeature.fly.dev` (see **Deployment**). If Fly's remote builder times out on the Swift build, `fly deploy --ha=false --depot=false` uses Fly's own builder.
 - **Rate limiting:** per admin token, `429` with `Retry-After`. Evaluation tokens are left to a proxy, like the big flag services do (see **Rate limiting**).
 
 ### Left for v1
 
-1. **Deploy.** `fly.toml` is ready (see **Deployment**); the first `just fly-setup` and `just fly-deploy` are left.
-2. **Try it on a Mac by hand.** CI builds and tests on macOS, but nobody has opened the package in Xcode or used the CLI from a Mac yet.
+1. **Try it on a Mac by hand.** CI builds and tests on macOS, but nobody has opened the package in Xcode or used the CLI from a Mac yet.
 
 ### Known gaps (fine for now; fix if they start to hurt)
 
