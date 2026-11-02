@@ -64,7 +64,8 @@ public struct FlagClientError: Error, Sendable, CustomStringConvertible {
 /// The getters never fail: a flag that's missing, disabled, failed, or of another type gives you your
 /// own default, the same as OFREP's "code default".
 public struct Flags: Sendable, Hashable, Codable {
-    public var flags: [Flag]
+    /// Keyed by flag key. (On the wire, and when saved, it's OFREP's array.)
+    public var flags: [String: Flag]
     /// For `FlagClient.fetch(context:previous:)`.
     public var etag: String?
 
@@ -84,12 +85,27 @@ public struct Flags: Sendable, Hashable, Codable {
     }
 
     public init(flags: [Flag], etag: String? = nil) {
-        self.flags = flags
+        self.flags = Dictionary(flags.map { ($0.key, $0) }, uniquingKeysWith: { _, last in last })
         self.etag = etag
     }
 
-    // ponytail: linear scan; flags per environment are few. Index by key if that changes.
-    public subscript(key: String) -> Flag? { flags.first { $0.key == key } }
+    private enum CodingKeys: String, CodingKey { case flags, etag }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            flags: try container.decode([Flag].self, forKey: .flags),
+            etag: try container.decodeIfPresent(String.self, forKey: .etag)
+        )
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(flags.values.sorted { $0.key < $1.key }, forKey: .flags)
+        try container.encodeIfPresent(etag, forKey: .etag)
+    }
+
+    public subscript(key: String) -> Flag? { flags[key] }
 
     public func bool(_ key: String, default defaultValue: Bool) -> Bool {
         if case .bool(let value)? = self[key]?.value { value } else { defaultValue }
