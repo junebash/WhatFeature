@@ -10,7 +10,11 @@ import WhatFeatureStorage
 struct Login: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Save the server URL and an admin token for the other commands.",
-        discussion: "Checks the token first. Saved to ~/.config/whatfeature/config.json, readable only by you."
+        discussion: """
+        Checks the token first. On macOS the token goes in your Keychain; elsewhere in \
+        ~/.config/whatfeature/config.json, readable only by you. The URL and project always go in that file. \
+        WHATFEATURE_TOKEN beats both, for machines with injected secrets.
+        """
     )
 
     @Option(help: "Server URL.")

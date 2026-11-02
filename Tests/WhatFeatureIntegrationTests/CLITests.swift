@@ -38,6 +38,8 @@ private struct Harness: Sendable {
         var environment = [
             "HOME": configHome.path,
             "XDG_CONFIG_HOME": configHome.path,
+            // The Keychain could show a dialog nobody answers. The file path is what's tested here.
+            "WHATFEATURE_KEYCHAIN": "off",
             "PATH": "/usr/bin:/bin",
         ]
         if let libraryPath = ProcessInfo.processInfo.environment["LD_LIBRARY_PATH"] {

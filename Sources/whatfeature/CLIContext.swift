@@ -19,19 +19,30 @@ struct CLIContext: Sendable {
     var httpClient: HTTPClient
     /// Runs blocking calls (file reads and writes, reading standard input) off Swift concurrency's shared threads.
     var threadPool: NIOThreadPool
+    /// Where `login` keeps the token. `nil` keeps it in the settings file: the default off macOS, and in tests.
+    var keychain: Keychain? = nil
 
     @TaskLocal static var current: CLIContext = .live
 
     /// The real world. This is the only place the CLI uses process-wide globals.
     static var live: CLIContext {
         let environment = ProcessInfo.processInfo.environment
-        return CLIContext(
+        let settingsFile = settingsFile(environment: environment, home: FileManager.default.homeDirectoryForCurrentUser)
+        var context = CLIContext(
             environment: environment,
-            settingsFile: settingsFile(environment: environment, home: FileManager.default.homeDirectoryForCurrentUser),
+            settingsFile: settingsFile,
             terminal: StandardTerminal(threadPool: .singleton),
             httpClient: .shared,
             threadPool: .singleton
         )
+        #if os(macOS)
+        // `off` is for Macs where nobody can answer a Keychain dialog (CI, tests): the Keychain can show one and
+        // wait for it, e.g. when there's no login keychain.
+        if environment["WHATFEATURE_KEYCHAIN"] != "off" {
+            context.keychain = Keychain(account: settingsFile.path)
+        }
+        #endif
+        return context
     }
 
     /// `$XDG_CONFIG_HOME/whatfeature/config.json`, else `~/.config/whatfeature/config.json`.

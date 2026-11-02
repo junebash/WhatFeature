@@ -4,7 +4,7 @@ import NIOPosix
 import WhatFeatureClient
 
 /// Saved by `whatfeature login`, in `CLIContext.settingsFile` (`~/.config/whatfeature/config.json` by default),
-/// readable only by you.
+/// readable only by you. With a `CLIContext.keychain` (on macOS), the token goes there instead of the file.
 struct SavedSettings: Codable {
     var url: String?
     var token: String?
@@ -16,10 +16,25 @@ extension CLIContext {
     func loadSettings() async -> SavedSettings {
         let file = settingsFile
         let data = try? await threadPool.runIfActive { try Data(contentsOf: file) }
-        return data.flatMap { try? JSONDecoder().decode(SavedSettings.self, from: $0) } ?? SavedSettings()
+        var settings = data.flatMap { try? JSONDecoder().decode(SavedSettings.self, from: $0) } ?? SavedSettings()
+        // A token already in the file (saved before the Keychain, or while it was locked) still counts.
+        if settings.token == nil, let keychain {
+            settings.token = try? await threadPool.runIfActive { try keychain.read() }
+        }
+        return settings
     }
 
     func saveSettings(_ settings: SavedSettings) async throws {
+        var settings = settings
+        if let keychain, let token = settings.token {
+            do {
+                try await threadPool.runIfActive { try keychain.save(token) }
+                settings.token = nil
+            } catch {
+                // e.g. over SSH, where the Keychain is locked. The file is still readable only by you.
+                try await terminal.writeError("Couldn't save the token in the Keychain (\(error)); saving it in \(settingsFile.path).\n")
+            }
+        }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(settings)
@@ -42,11 +57,13 @@ extension CLIContext {
         }
     }
 
-    /// Deletes the saved settings. Returns `false` if there were none.
+    /// Deletes the saved settings, and the token in the Keychain. Returns `false` if there were none.
     func removeSettings() async throws -> Bool {
         let file = settingsFile
+        let keychain = keychain
         return try await threadPool.runIfActive {
-            guard FileManager.default.fileExists(atPath: file.path) else { return false }
+            let removedToken = try keychain?.delete() ?? false
+            guard FileManager.default.fileExists(atPath: file.path) else { return removedToken }
             try FileManager.default.removeItem(at: file)
             return true
         }

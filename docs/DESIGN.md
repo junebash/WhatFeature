@@ -330,7 +330,9 @@ The one exception is `whatfeature db token …`, which works on the file directl
 
 Every read command takes `--json`.
 
-Settings resolve flag → environment variable → `login` file: `--url` / `WHATFEATURE_URL`, `--token` / `WHATFEATURE_TOKEN`, `-p` / `WHATFEATURE_PROJECT`. `login` saves them to `$XDG_CONFIG_HOME/whatfeature/config.json` (else `~/.config/…`), created with `0600` permissions. If `login` gets no `--token`, it asks for one, so the secret stays out of shell history. (On macOS, the Keychain would be nicer; maybe later.)
+Settings resolve flag → environment variable → `login` file: `--url` / `WHATFEATURE_URL`, `--token` / `WHATFEATURE_TOKEN`, `-p` / `WHATFEATURE_PROJECT`. `login` saves them to `$XDG_CONFIG_HOME/whatfeature/config.json` (else `~/.config/…`), created with `0600` permissions. If `login` gets no `--token`, it asks for one, so the secret stays out of shell history.
+
+**On macOS the token goes in the Keychain**, not the file: a generic password with service `whatfeature`, whose account is the settings file's path (so each settings file has its own token, and tests don't share one). Everywhere else it stays in the `0600` file, as `gh` does without a keyring. `logout` removes both. If the Keychain refuses (e.g. it's locked), `login` says so and falls back to the file, and a token already in the file keeps working. The Keychain can also show a dialog and wait for an answer (there's no login keychain; a rebuilt binary asks to read the item). On a Mac where nobody can answer one (CI, tests that run the binary), set `WHATFEATURE_KEYCHAIN=off` to use the file. For remote machines with injected secrets, `WHATFEATURE_TOKEN` beats both and nothing is saved.
 
 **Nothing global.** Commands get everything from outside through a `CLIContext`: environment variables, the settings file's location, the terminal (standard input, output and errors, and whether input is a terminal), the HTTP client, and a thread pool for blocking file and terminal reads. ArgumentParser builds the command structs, so there's nowhere to pass these as parameters; the context is a `@TaskLocal` instead. `main` uses `CLIContext.live`, the only place that touches `ProcessInfo`, the home directory, the real terminal or `HTTPClient.shared`. Tests run commands in-process with `runWhatFeature(arguments)` inside `CLIContext.$current.withValue(…)`, each with its own context, so tests running at the same time can't see each other's settings. A fake terminal can claim to be interactive, which is how the delete prompt gets tested.
 
@@ -422,10 +424,9 @@ CI (`.github/workflows/ci.yml`) runs `swift test` on every push to `main` and on
 
 ### Known gaps (fine for now; fix if they start to hurt)
 
-- No protection against two edits to the same config at once. An `If-Match` on the config version would do it.
+- **Two edits to the same config at once: the last save wins.** `config` commands read the config, change it, and `PUT` the whole thing back. If two people (or two terminals) do that at the same time, the second save silently overwrites the first one's change. Rare with one person. The fix when it matters: `PUT` takes `If-Match` with the config version it started from, and the server answers `412` if the version moved on.
 - Environments created *after* a flag get the sorted-first variant as their default, even if the flag was created with `--default`.
-- The CLI keeps its admin token in a `0600` file. The macOS Keychain would be better there.
-- No regex operator (see **Operators**).
+- **To do: a regex operator** (see **Operators**): `matches`, e.g. `email matches "^[^@]+@(acme|acme-corp)\.com$"`. Needs a `Sendable` wrapper around Swift's `Regex`, compiled once when the snapshot loads, and validation of the pattern on save.
 - Nothing limits evaluation requests, or requests without a valid token, until a proxy in front of the server limits by IP (see **Rate limiting**). That waits on the host.
 - Integer vs. float numbers (see **Open questions**).
 
