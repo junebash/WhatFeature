@@ -6,19 +6,45 @@ on:
     tags: ["v*"]
 
 jobs:
-  # Same build as the Dockerfile: the Swift runtime is linked in statically. Still needs SQLite and libstdc++ from
-  # the system, and glibc 2.38+ (Ubuntu 24.04 or newer, `apt install libsqlite3-0`).
+  # Fully static (musl, via Swift's Static Linux SDK, with SQLite compiled in), so it runs on any x86_64 Linux.
+  # The SDK must match the container's Swift version exactly.
   linux:
     runs-on: ubuntu-latest
     container: swift:6.4.2-noble
     timeout-minutes: 30
+    env:
+      SDK_URL: https://download.swift.org/swift-6.4.2-release/static-sdk/swift-6.4.2-RELEASE/swift-6.4.2-RELEASE_static-linux-0.1.0.artifactbundle.tar.gz
+      SDK_SHA256: 3786b179936d9cc9e266dd506bd1654176358d7b25288e243359f4d17cc4dc5a
+      SQLITE_URL: https://sqlite.org/2026/sqlite-amalgamation-3540100.zip
+      SQLITE_SHA256: 0a9c8e34352dad46006aa82836d5383bff9dc6bc9ce5a60553c05aa30e6ad1f9
     steps:
       - uses: actions/checkout@v7
-      - run: apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev
-      - run: swift build -c release --product whatfeature --static-swift-stdlib
-      - run: tar -czf whatfeature-linux-x86_64.tar.gz -C "$(swift build -c release --show-bin-path)" whatfeature
+      - run: apt-get update && apt-get install -y --no-install-recommends curl ca-certificates unzip
+      - run: swift sdk install "$SDK_URL" --checksum "$SDK_SHA256"
+      # GRDB links `sqlite3`; putting a musl build of it in the SDK's sysroot lets SwiftPM find it with no flags.
+      - name: Build SQLite into the SDK
+        run: |
+          curl -fsSL -o sqlite.zip "$SQLITE_URL"
+          echo "$SQLITE_SHA256  sqlite.zip" | sha256sum -c
+          unzip -q sqlite.zip -d /tmp && cd /tmp/sqlite-amalgamation-*
+          root="$(find ~/.swiftpm/swift-sdks -type d -path '*musl-*.sdk/x86_64')"
+          clang --target=x86_64-unknown-linux-musl --sysroot="$root" -O2 -DSQLITE_THREADSAFE=1 -DSQLITE_ENABLE_FTS5 -c sqlite3.c
+          llvm-ar rcs "$root/usr/lib/libsqlite3.a" sqlite3.o
+          cp sqlite3.h sqlite3ext.h "$root/usr/include/"
+      - run: swift build -c release --product whatfeature --swift-sdk x86_64-swift-linux-musl -Xlinker -s
+      - run: tar -czf whatfeature-linux-x86_64.tar.gz -C "$(swift build -c release --swift-sdk x86_64-swift-linux-musl --show-bin-path)" whatfeature
       - uses: actions/upload-artifact@v7
         with: { name: linux, path: whatfeature-linux-x86_64.tar.gz }
+
+  # The Linux binary must run on a stock Debian 12 (glibc 2.36) with nothing installed.
+  linux-check:
+    needs: linux
+    runs-on: ubuntu-latest
+    container: debian:12
+    steps:
+      - uses: actions/download-artifact@v8
+        with: { name: linux }
+      - run: tar -xzf whatfeature-linux-x86_64.tar.gz && ./whatfeature --help
 
   # One binary for Apple silicon and Intel. Not signed or notarized.
   macos:
@@ -32,7 +58,7 @@ jobs:
         with: { name: macos, path: whatfeature-macos-universal.tar.gz }
 
   release:
-    needs: [linux, macos]
+    needs: [linux-check, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
