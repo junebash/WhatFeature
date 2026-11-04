@@ -27,7 +27,8 @@ jobs:
           curl -fsSL -o sqlite.zip "$SQLITE_URL"
           echo "$SQLITE_SHA256  sqlite.zip" | sha256sum -c
           unzip -q sqlite.zip -d /tmp && cd /tmp/sqlite-amalgamation-*
-          root="$(find ~/.swiftpm/swift-sdks -type d -path '*musl-*.sdk/x86_64')"
+          root="$(swift sdk configure --show-configuration swift-6.4.2-RELEASE_static-linux-0.1.0 x86_64-swift-linux-musl | sed -n 's/^sdkRootPath: //p')"
+          test -d "$root"
           clang --target=x86_64-unknown-linux-musl --sysroot="$root" -O2 -DSQLITE_THREADSAFE=1 -DSQLITE_ENABLE_FTS5 -c sqlite3.c
           llvm-ar rcs "$root/usr/lib/libsqlite3.a" sqlite3.o
           cp sqlite3.h sqlite3ext.h "$root/usr/include/"
