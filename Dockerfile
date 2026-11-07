@@ -41,7 +41,6 @@ COPY --from=build /whatfeature /usr/local/bin/whatfeature
 
 USER whatfeature
 WORKDIR /data
-VOLUME /data
 
 ENV HOST=0.0.0.0 \
     PORT=8080 \
