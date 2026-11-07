@@ -4,7 +4,7 @@
 
 A small feature flag service written in Swift. Flags are evaluated on the server and served over the [OpenFeature Remote Evaluation Protocol (OFREP)](https://github.com/open-feature/protocol), so any OpenFeature SDK with an OFREP provider can use it. Swift apps can use the small `WhatFeatureFlags` library instead (see "Use flags in an app" below).
 
-Status: early, but usable end to end: OFREP evaluation, an admin API and CLI, SQLite storage, tokens, and an audit log. No UI. Deploys to Fly.io (see below). CI tests every push on Linux and macOS, and builds and starts the Docker image. The full list is under "Status and roadmap" in [`docs/DESIGN.md`](docs/DESIGN.md), along with the design and the full admin API.
+Status: early, but usable end to end: OFREP evaluation, an admin API and CLI, SQLite storage, tokens, and an audit log. No UI. Deploys to Railway (see below). CI tests every push on Linux and macOS, and builds and starts the Docker image. The full list is under "Status and roadmap" in [`docs/DESIGN.md`](docs/DESIGN.md), along with the design and the full admin API.
 
 ## Try it
 
@@ -70,18 +70,22 @@ just docker-token
 
 The image runs the server on port 8080, with its SQLite database on the `/data` volume (`whatfeature-data` in the recipe). Settings are the environment variables below; `HOST`, `PORT` and `DATABASE_PATH` are already set for the container. `just docker-token` creates an admin token inside the running container; then `just login` works the same as without Docker. `just docker-reset` deletes the container and its data.
 
-### Deploy to Fly.io
+### Deploy to Railway
 
-Needs [`flyctl`](https://fly.io/docs/flyctl/install/), logged in (`fly auth login`). Settings are in [`fly.toml`](fly.toml): one always-on Machine in `sjc`, with the database on a 1 GB volume. The app name is global on Fly, so change `app` there if `whatfeature` is taken.
+Any host that runs a Docker image as **one** always-on instance, with a persistent disk at `/data`, will do. Ours is [Railway](https://railway.com): one service built from the `Dockerfile`, in one region, with a volume at `/data`. Needs the [Railway CLI](https://docs.railway.com/cli), logged in (`railway login`).
 
 ```bash
-just fly-setup    # once: creates the app and its volume
-just fly-deploy   # builds the image and deploys it
-just fly-token    # prints an admin token from the Machine
-just cli login --url https://whatfeature.fly.dev
+railway init --name whatfeature
+railway add --service whatfeature --variables RAILWAY_RUN_UID=0 --variables PORT=8080
+# Pick the service's region in its settings now: a volume stays in the region it was created in.
+railway volume add --mount-path /data
+railway service source connect --repo <owner>/WhatFeature --branch main --service whatfeature
+railway domain --port 8080
+just railway-token     # prints an admin token from the server
+just cli login --url https://<your-domain>
 ```
 
-Other settings (such as `RATE_LIMIT_ADMIN`) go in an `[env]` section in `fly.toml`. Deploying again keeps the data; the Machine is down for a few seconds while it restarts. Once it's set up, CI deploys every push to `main` that passes; it needs a `FLY_API_TOKEN` repository secret (`fly tokens create deploy`).
+`RAILWAY_RUN_UID=0` runs the server as root, because Railway mounts volumes as root and the image's own user can't write to them. In the service's settings, set the health check path to `/health` and turn on **Wait for CI**, so a push to `main` deploys only once CI passes. Other settings (such as `RATE_LIMIT_ADMIN`) are service variables. Deploying again keeps the data; the server is down for a few seconds while it restarts.
 
 Prebuilt CLI binaries for Linux (x86_64, static, no dependencies) and macOS are on the [releases page](https://github.com/junebash/WhatFeature/releases). To cut one: `just release 0.1.0`.
 

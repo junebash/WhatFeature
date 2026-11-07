@@ -397,17 +397,17 @@ So:
 - **Admin tokens:** an in-memory token bucket per token, 600 requests a minute by default (`serve --admin-rate-limit` / `RATE_LIMIT_ADMIN`; a whole number, or `off`). The bucket holds one minute's worth, so that's up to 600 at once, then 10 a second. In-memory works because there is a single instance.
   - **Checked after the token.** Only real tokens get a bucket (keyed by the token's hash), so made-up tokens can't fill memory. They get `401` as before.
   - **Over the limit → `429`** with `Retry-After` in whole seconds and `{"error": "Too many requests. Try again in N seconds."}`. Logged at `notice` with the token ID, never the secret.
-- **Evaluation tokens: the server never limits them.** **Per-IP limits belong in the proxy in front of the server** (e.g. Cloudflare rate-limiting rules if we use Cloudflare Tunnel). Fly's proxy doesn't do this; put Cloudflare in front if it's ever needed. An abused token gets revoked and replaced (`whatfeature tokens revoke`).
+- **Evaluation tokens: the server never limits them.** **Per-IP limits belong in the proxy in front of the server** (e.g. Cloudflare rate-limiting rules if we use Cloudflare Tunnel). Railway's proxy doesn't do this; put Cloudflare in front if it's ever needed. An abused token gets revoked and replaced (`whatfeature tokens revoke`).
 
 *Considered:* an opt-in per-token evaluation limit. It was built, then removed: it's the very thing the services above avoid, and it would likely never be turned on. If it's ever needed, it's in the git history (commit `364e653`). Note for that day: OFREP's spec gives `Retry-After` as an ISO 8601 date, not seconds.
 
 ## Deployment
 
-**Fly.io** ([`fly.toml`](../fly.toml), `just fly-*` recipes). One Machine, always on (no auto-stop, so it suits SSE later), shared CPU with 256 MB, SQLite on a 1 GB Fly volume at `/data`. Fly builds the same Docker image and gives the volume to the image's non-root user. TLS and HTTPS redirects are Fly's; `/health` is its health check. Deploys stop the old Machine before starting the new one (a volume attaches to one Machine), so there are a few seconds of downtime, which apps ride out on their cached flags. CI deploys every push to `main` once the tests and the Docker check pass (it builds the image itself, so Fly's remote builder isn't involved).
+**Railway** (see "Deploy to Railway" in the README, `just railway-*` recipes). One service in `us-west2`, always on (so it suits SSE later), built from the same Docker image by Railway's builder, with SQLite on a Railway volume at `/data`. Railway mounts volumes as root, so the service sets `RAILWAY_RUN_UID=0` and the server runs as root there. TLS is Railway's. `/health` is checked only while a deploy starts; after that Railway just restarts the server if it exits. A volume attaches to one running deployment, so deploys have a few seconds of downtime, which apps ride out on their cached flags. Railway deploys each push to `main` once CI passes ("Wait for CI"), so CI holds no deploy secret. Moved from Fly.io in November 2026: the same setup costs about the same and needs no deploy job.
 
 **Releases** are git tags (`just release 0.1.0` pushes `v0.1.0`). CI attaches the CLI to the GitHub release: Linux x86_64 (fully static: musl via the Static Linux SDK, SQLite compiled in, stripped; runs on any x86_64 Linux, checked on Debian 12) and a macOS universal binary, unsigned.
 
-Constraints that keep moving off Fly easy:
+Constraints that keep changing hosts easy:
 
 - one Docker image, Linux, all config from environment variables
 - runs as a single instance, with SQLite on a persistent disk
@@ -415,7 +415,7 @@ Constraints that keep moving off Fly easy:
 
 *Considered:* Oracle Cloud's free tier, Google Cloud Run (needs a fix for SQLite on its temporary disk, e.g. Litestream), or hardware at home behind Cloudflare Tunnel.
 
-Not done yet: backups beyond Fly's daily volume snapshots, and per-IP limits for evaluation (see **Rate limiting**).
+Not done yet: backups (Railway's volume backups need its Pro plan), and per-IP limits for evaluation (see **Rate limiting**).
 
 ## Status and roadmap
 
@@ -433,7 +433,7 @@ CI (`.github/workflows/ci.yml`) runs `swift test` on every push to `main` and on
 - **CI:** `swift test` on Linux and macOS, and a job that builds the Docker image, starts it, and checks the admin API and OFREP answer.
 - **Docker image:** two stages, building with `swift:6.4.2-noble` and running on `ubuntu:noble` with the Swift runtime and Foundation linked statically. The binary needs only `libsqlite3`, `libstdc++`, `libgcc` and `zlib` besides libc (checked with `ldd`). Runs as a non-root user, data on the `/data` volume.
 - **`justfile`:** recipes for building, testing, running a dev server, the CLI, and the Docker image.
-- **Deployed** on Fly.io at `whatfeature.fly.dev` (see **Deployment**). If Fly's remote builder times out on the Swift build, `fly deploy --ha=false --depot=false` uses Fly's own builder.
+- **Deployed** on Railway (see **Deployment**).
 - **Rate limiting:** per admin token, `429` with `Retry-After`. Evaluation tokens are left to a proxy, like the big flag services do (see **Rate limiting**).
 
 ### Left for v1

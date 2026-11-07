@@ -1,7 +1,7 @@
 # WhatFeature tasks. Run `just` to see them all.
 #
 # Needs Swift 6.2 or newer (Xcode 26 on a Mac). The docker-* recipes need Docker (Docker Desktop or OrbStack).
-# The fly-* recipes need flyctl, logged in.
+# The railway-* recipes need the Railway CLI, logged in and linked (`railway login`, `railway link`).
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
@@ -110,24 +110,15 @@ docker-stop:
 docker-reset: docker-stop
     -docker volume rm whatfeature-data
 
-# --- Fly.io (needs flyctl, logged in; settings in fly.toml) ---
+# --- Railway (needs the Railway CLI, logged in and linked; see "Deploy to Railway" in the README) ---
 
-# Create the app and its volume. Once.
-fly-setup:
-    fly apps create "$(sed -n 's/^app = "\(.*\)"/\1/p' fly.toml)"
-    fly volumes create whatfeature_data --size 1 --yes --region "$(sed -n 's/^primary_region = "\(.*\)"/\1/p' fly.toml)"
+# Create an admin token on the server and print it
+railway-token name="railway":
+    railway ssh -- whatfeature db token create --admin --name "{{name}}" --database /data/whatfeature.sqlite
 
-# Build and deploy. One Machine only: the server keeps caches and rate limits in memory.
-fly-deploy:
-    fly deploy --ha=false
-
-# Create an admin token on the Fly Machine and print it
-fly-token name="fly":
-    fly ssh console --user whatfeature -C 'whatfeature db token create --admin --name "{{name}}" --database /data/whatfeature.sqlite'
-
-# Follow the app's logs
-fly-logs:
-    fly logs
+# Follow the server's logs
+railway-logs:
+    railway logs
 
 # --- Releases ---
 
