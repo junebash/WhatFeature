@@ -34,6 +34,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-http-types.git", from: "1.0.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.6.0"),
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.0"),
+        .package(url: "https://github.com/swift-server/swift-service-lifecycle.git", from: "2.13.0"),
         .package(url: "https://github.com/swift-server/async-http-client.git", from: "1.26.0"),
         // Test only: runs the built CLI. Its paths are `FilePath`, from `System` on Apple platforms and
         // swift-system's `SystemPackage` elsewhere, so tests that build one depend on swift-system directly.
@@ -90,6 +91,7 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log", condition: .when(traits: ["Server"])),
                 .product(name: "NIOCore", package: "swift-nio", condition: .when(traits: ["Server"])),
                 .product(name: "NIOFoundationCompat", package: "swift-nio", condition: .when(traits: ["Server"])),
+                .product(name: "ServiceLifecycle", package: "swift-service-lifecycle", condition: .when(traits: ["Server"])),
             ],
             swiftSettings: swiftSettings
         ),
@@ -170,8 +172,10 @@ let package = Package(
                 "WhatFeatureStorage",
                 .product(name: "HTTPTypes", package: "swift-http-types"),
                 .product(name: "HummingbirdTesting", package: "hummingbird"),
+                .product(name: "Logging", package: "swift-log"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOFoundationCompat", package: "swift-nio"),
+                .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
             ],
             swiftSettings: swiftSettings
         ),

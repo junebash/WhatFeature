@@ -211,6 +211,7 @@ Server:
 | `--port` | `PORT` | `8080` |
 | `--seed` | `SEED_FILE` | none |
 | `--admin-rate-limit` | `RATE_LIMIT_ADMIN` | `600` requests a minute per token (`off` to turn off) |
+| `--tracking-database` | `TRACKING_DATABASE_PATH` | next to `--database`, with `-tracking` added (`whatfeature-tracking.sqlite`). Only written for environments with tracking on; see "Tracking" in [`docs/DESIGN.md`](docs/DESIGN.md). |
 
 CLI (flag, else env, else what `login` saved):
 

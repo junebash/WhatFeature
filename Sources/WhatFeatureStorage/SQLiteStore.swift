@@ -16,6 +16,9 @@ public final class SQLiteStore: EvaluationStore {
     private let snapshots = Mutex<[EnvironmentID: EnvironmentSnapshot]>([:])
     /// Token ID → the last `lastUsedAt` we wrote, so a busy token doesn't cause a write per request.
     private let tokenLastUsed = Mutex<[String: Date]>([:])
+    /// Filled on first use. `setTracking` overwrites an entry after it commits; a load only fills a missing one,
+    /// so a slow load can't bring back settings that were just replaced.
+    private let trackingSettingsCache = Mutex<[EnvironmentID: TrackingSettings]>([:])
 
     /// Opens (or creates) a database file and brings its schema up to date.
     ///
@@ -213,7 +216,7 @@ public final class SQLiteStore: EvaluationStore {
     @discardableResult
     public func setTracking(_ settings: TrackingSettings, environment environmentID: EnvironmentID, by actor: AuditActor) async throws -> Environment {
         let settings = try settings.validated()
-        return try await database.write { db in
+        let environment = try await database.write { db in
             guard var record = try EnvironmentRecord.fetchOne(db, key: environmentID.rawValue) else {
                 throw StoreError.notFound("No environment with ID '\(environmentID)'")
             }
@@ -226,6 +229,15 @@ public final class SQLiteStore: EvaluationStore {
                 project: before.projectID, environment: environmentID, before: before, after: record.model
             )
             return record.model
+        }
+        trackingSettingsCache.withLock { $0[environmentID] = environment.tracking }
+        return environment
+    }
+
+    /// Every environment's, archived ones included, for applying retention and allowlists.
+    public func trackingSettings() async throws -> [EnvironmentID: TrackingSettings] {
+        try await database.read { db in
+            Dictionary(uniqueKeysWithValues: try EnvironmentRecord.fetchAll(db).map { (EnvironmentID($0.id), $0.tracking) })
         }
     }
 
@@ -611,6 +623,21 @@ public final class SQLiteStore: EvaluationStore {
         }
         let loaded = try await database.read { db in try Self.loadSnapshot(environment, db) }
         return cache(loaded, for: environment)
+    }
+
+    /// An unknown environment gets the defaults: tracking off.
+    public func trackingSettings(for environment: EnvironmentID) async throws -> TrackingSettings {
+        if let cached = trackingSettingsCache.withLock({ $0[environment] }) {
+            return cached
+        }
+        let loaded = try await database.read { db in
+            try EnvironmentRecord.fetchOne(db, key: environment.rawValue)?.tracking ?? TrackingSettings()
+        }
+        return trackingSettingsCache.withLock { cache in
+            if let existing = cache[environment] { return existing }
+            cache[environment] = loaded
+            return loaded
+        }
     }
 
     private func refreshSnapshots(_ environmentIDs: [EnvironmentID]) async throws {

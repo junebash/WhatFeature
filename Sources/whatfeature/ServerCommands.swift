@@ -13,9 +13,25 @@ struct DatabaseOptions: ParsableArguments {
     )
     var path: String?
 
+    private var resolvedPath: String {
+        path ?? CLIContext.current.environment["DATABASE_PATH"] ?? "whatfeature.sqlite"
+    }
+
     func open() throws -> SQLiteStore {
-        let path = path ?? CLIContext.current.environment["DATABASE_PATH"] ?? "whatfeature.sqlite"
-        return path == ":memory:" ? try SQLiteStore.inMemory() : try SQLiteStore(path: path)
+        resolvedPath == ":memory:" ? try SQLiteStore.inMemory() : try SQLiteStore(path: resolvedPath)
+    }
+
+    /// `trackingPath`, else next to the main database: `data/whatfeature.sqlite` → `data/whatfeature-tracking.sqlite`.
+    /// A throwaway main database gets a throwaway tracking database.
+    func openTracking(trackingPath: String?) throws -> TrackingStore {
+        if let path = trackingPath {
+            return path == ":memory:" ? try TrackingStore.inMemory() : try TrackingStore(path: path)
+        }
+        if resolvedPath == ":memory:" { return try TrackingStore.inMemory() }
+        let main = URL(fileURLWithPath: resolvedPath)
+        let name = main.deletingPathExtension().lastPathComponent + "-tracking"
+        let file = main.pathExtension.isEmpty ? name : "\(name).\(main.pathExtension)"
+        return try TrackingStore(path: main.deletingLastPathComponent().appending(path: file).path)
     }
 }
 
@@ -36,6 +52,14 @@ struct Serve: AsyncParsableCommand {
     @Option(help: "Requests per minute for each admin token, or 'off'. Env: RATE_LIMIT_ADMIN. (default: \(RateLimit.adminDefault.requestsPerMinute))")
     var adminRateLimit: String?
 
+    @Option(
+        help: """
+            SQLite file for tracking data (only written for environments with tracking on), or ':memory:'. \
+            Env: TRACKING_DATABASE_PATH. (default: next to --database, with '-tracking' added to the name)
+            """
+    )
+    var trackingDatabase: String?
+
     func run() async throws {
         let context = CLIContext.current
         let host = host ?? context.environment["HOST"] ?? "127.0.0.1"
@@ -53,10 +77,12 @@ struct Serve: AsyncParsableCommand {
             let seed = try await context.threadPool.runIfActive { try Seed.read(from: URL(fileURLWithPath: seedPath)) }
             try await store.load(seed)
         }
+        let trackingStore = try database.openTracking(trackingPath: trackingDatabase ?? context.environment["TRACKING_DATABASE_PATH"])
         let app = buildApplication(
             store: store,
             configuration: .init(address: .hostname(host, port: port), serverName: "WhatFeature"),
-            adminRateLimit: rateLimit
+            adminRateLimit: rateLimit,
+            tracking: TrackingRecorder(store: store, trackingStore: trackingStore)
         )
         do {
             try await app.runService()

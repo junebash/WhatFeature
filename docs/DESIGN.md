@@ -373,7 +373,7 @@ Written in the same transaction as the change. Never edited or deleted through t
 
 ## Tracking
 
-Partly built: the storage (`TrackingSettings` on `Environment`, `SQLiteStore.setTracking`, and `TrackingStore` for the tracking file). Not yet: recording from OFREP requests, the buffer, the sweep, and the admin API and CLI (see **Status and roadmap**). **Optional, per environment: the server records who it saw and what it served them**, so I can list the IDs being served, look up one ID's flags and override them with individual targeting, and get assignment data for A/B tests. Modeled on LaunchDarkly's Contexts list and exposure events, with the recording done on the server so apps don't change: `FlagClient` and other OFREP clients work exactly as before.
+Partly built: the storage (`TrackingSettings` on `Environment`, `SQLiteStore.setTracking`, `TrackingStore` for the tracking file) and the recorder (`TrackingRecorder`, which `serve` runs). Not yet: the admin API and CLI, so tracking can't be turned on from outside yet (see **Status and roadmap**). **Optional, per environment: the server records who it saw and what it served them**, so I can list the IDs being served, look up one ID's flags and override them with individual targeting, and get assignment data for A/B tests. Modeled on LaunchDarkly's Contexts list and exposure events, with the recording done on the server so apps don't change: `FlagClient` and other OFREP clients work exactly as before.
 
 **Settings live on the environment**, changed through `PATCH …/environments/{env}` (so they're audited like any other admin write):
 
@@ -396,8 +396,9 @@ Attributes sit on the seen row, not on each exposure, as in LaunchDarkly (where 
 
 **Kept off the hot path:**
 
-- **A separate SQLite file** (`TRACKING_DATABASE_PATH`, next to the main database by default). SQLite allows one writer per file, so tracking writes never wait on admin writes or the other way round, and the file can be thrown away without touching flags.
-- **Buffered in memory, written in batches** every few seconds, with repeats for the same ID merged. Evaluation never waits on tracking and never fails because of it. A crash loses at most the last few seconds; a full buffer drops records and logs how many.
+- **A separate SQLite file** (`serve --tracking-database` / `TRACKING_DATABASE_PATH`; by default next to the main database, `whatfeature.sqlite` → `whatfeature-tracking.sqlite`, and in memory when the main database is). SQLite allows one writer per file, so tracking writes never wait on admin writes or the other way round, and the file can be thrown away without touching flags.
+- **Buffered in memory, written in batches** every 5 seconds, up to 10,000 requests between writes. Repeats for the same ID are merged by the write (an upsert per row), which also copes with batches arriving out of order. Evaluation only reads the environment's tracking settings (cached in memory, updated when they change) and appends to the buffer; it never waits on the tracking database and never fails because of it. A crash loses at most the last few seconds; a full buffer drops requests and logs how many; a failed write is logged and its batch lost. On shutdown the server stops first, then the buffer is written once more.
+- **The sweep** (retention and allowlist) runs at startup and then hourly, for every environment, tracking on or off.
 - Dry-run evaluations through the admin API record nothing.
 
 *Considered:* exposure events sent by the app at the moment it reads a flag, as LaunchDarkly's SDKs do. That measures real exposure, but it changes every client, and other OFREP clients wouldn't send them. It can be added to `FlagClient` later without changing its API. Also considered: a separate tracking service. A second file in the same process gets the same isolation without another deployment.

@@ -9,4 +9,7 @@ public protocol EvaluationStore: Sendable {
 
     /// Every flag in the environment. An unknown environment returns an empty snapshot.
     func snapshot(for environment: EnvironmentID) async throws -> EnvironmentSnapshot
+
+    /// What to record about the environment's requests. Asked on every request, so keep it in memory.
+    func trackingSettings(for environment: EnvironmentID) async throws -> TrackingSettings
 }

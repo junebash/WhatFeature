@@ -7,7 +7,8 @@ public import WhatFeatureStorage
 public func buildApplication(
     store: SQLiteStore,
     configuration: ApplicationConfiguration = .init(),
-    adminRateLimit: RateLimit? = .adminDefault
+    adminRateLimit: RateLimit? = .adminDefault,
+    tracking: TrackingRecorder? = nil
 ) -> some ApplicationProtocol {
     let router = Router(context: WhatFeatureRequestContext.self)
     // Logs method and path only. Evaluation contexts are in the body, so they never reach the logs.
@@ -21,12 +22,12 @@ public func buildApplication(
     let ofrep = router.group("ofrep/v1")
         .add(middleware: OFREPCORSMiddleware())
         .add(middleware: EvaluationTokenMiddleware(store: store))
-    OFREPRoutes(store: store).register(on: ofrep)
+    OFREPRoutes(store: store, tracking: tracking).register(on: ofrep)
 
     let admin = router.group(RouterPath(AdminPaths.prefix))
         .add(middleware: AdminErrorMiddleware())
         .add(middleware: AdminTokenMiddleware(store: store, rateLimiter: adminRateLimit.map { RateLimiter(limit: $0) }))
     AdminRoutes(store: store).register(on: admin)
 
-    return Application(router: router, configuration: configuration)
+    return Application(router: router, configuration: configuration, services: tracking.map { [$0] } ?? [])
 }

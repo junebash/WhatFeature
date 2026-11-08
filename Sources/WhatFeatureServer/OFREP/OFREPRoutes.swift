@@ -10,6 +10,8 @@ struct OFREPRoutes {
     typealias Context = WhatFeatureRequestContext
 
     let store: any EvaluationStore
+    /// `nil` records nothing.
+    let tracking: TrackingRecorder?
 
     /// Request bodies are just an evaluation context, so this is generous.
     static let maxBodySize = 64 * 1_024
@@ -37,7 +39,9 @@ struct OFREPRoutes {
         }
 
         let snapshot = try await store.snapshot(for: environment)
-        let evaluation = OFREPEvaluation(result: snapshot.evaluate(flagKey: key, context: evaluationContext), in: snapshot)
+        let result = snapshot.evaluate(flagKey: key, context: evaluationContext)
+        await tracking?.record([result], context: evaluationContext, environment: environment, snapshot: snapshot)
+        let evaluation = OFREPEvaluation(result: result, in: snapshot)
         return try .json(evaluation, status: evaluation.status)
     }
 
@@ -55,10 +59,13 @@ struct OFREPRoutes {
         let snapshot = try await store.snapshot(for: environment)
         let etag = try ETag.make(environment: environment, version: snapshot.version, context: evaluationContext)
         if ETag.header(request.headers[.ifNoneMatch], matches: etag) {
+            await tracking?.record([], context: evaluationContext, environment: environment, snapshot: snapshot)
             return Response(status: .notModified, headers: [.eTag: etag])
         }
 
-        return try .json(OFREPBulkResponse(snapshot.evaluateAll(context: evaluationContext), in: snapshot), status: .ok, headers: [.eTag: etag])
+        let results = snapshot.evaluateAll(context: evaluationContext)
+        await tracking?.record(results, context: evaluationContext, environment: environment, snapshot: snapshot)
+        return try .json(OFREPBulkResponse(results, in: snapshot), status: .ok, headers: [.eTag: etag])
     }
 
     /// Unreadable JSON is `PARSE_ERROR`. Valid JSON with a bad or missing context is `INVALID_CONTEXT`.

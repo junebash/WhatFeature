@@ -6,7 +6,8 @@
 #   docker build -t whatfeature .
 #   docker run -p 8080:8080 -v whatfeature-data:/data whatfeature
 #
-# Settings are environment variables (see the README): HOST, PORT, DATABASE_PATH, SEED_FILE, RATE_LIMIT_ADMIN.
+# Settings are environment variables (see the README): HOST, PORT, DATABASE_PATH, SEED_FILE, RATE_LIMIT_ADMIN,
+# TRACKING_DATABASE_PATH.
 # The SQLite database lives on the /data volume. For the first admin token, see `just docker-token`.
 
 FROM swift:6.4.2-noble AS build
