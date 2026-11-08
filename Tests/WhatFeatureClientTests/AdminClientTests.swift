@@ -21,6 +21,107 @@ private func withLiveServer(_ test: @Sendable (AdminClient, SQLiteStore) async t
     }
 }
 
+/// Like `withLiveServer`, with tracking. Tests write sightings straight into the tracking store.
+private func withLiveTrackingServer(_ test: @Sendable (AdminClient, SQLiteStore, TrackingStore) async throws -> Void) async throws {
+    let store = try SQLiteStore.inMemory()
+    let trackingStore = try TrackingStore.inMemory()
+    let admin = try await store.createAdminToken(name: "test", by: .system("test"))
+    let recorder = TrackingRecorder(store: store, trackingStore: trackingStore)
+    try await buildApplication(store: store, tracking: recorder).test(.live) { client in
+        let port = try #require(client.port)
+        let baseURL = try #require(URL(string: "http://localhost:\(port)"))
+        try await test(AdminClient(baseURL: baseURL, token: admin.secret, httpClient: .shared), store, trackingStore)
+    }
+}
+
+@Suite struct TrackingClientTests {
+    /// Targeting keys can hold anything, including characters that mean something in a query string.
+    static let awkwardKey = "user+1@example.com/a&b=c d"
+
+    @Test func settingsReadingAndDeleting() async throws {
+        try await withLiveTrackingServer { client, _, trackingStore in
+            _ = try await client.createProject(key: "demo")
+            let dev = try await client.createEnvironment(project: "demo", key: "dev")
+            #expect(try await client.tracking(project: "demo", environment: "dev") == TrackingSettings())
+
+            let saved = try await client.setTracking(
+                TrackingSettings(enabled: true, attributes: ["platform", "appVersion"]), project: "demo", environment: "dev"
+            )
+            #expect(saved == TrackingSettings(enabled: true, attributes: ["appVersion", "platform"]))
+
+            let start = Date(timeIntervalSince1970: 1_800_000_000)
+            func served(_ flag: String, _ variant: String) -> Sighting.Served {
+                Sighting.Served(flagKey: flag, variant: variant, reason: .split, matchedRule: nil, configVersion: 1)
+            }
+            try await trackingStore.record([
+                Sighting(environmentID: dev.id, targetingKey: Self.awkwardKey, attributes: ["appVersion": "3.1", "platform": "iOS"],
+                         time: start, served: [served("checkout", "test"), served("beta", "on")]),
+                Sighting(environmentID: dev.id, targetingKey: "other", attributes: [:], time: start.addingTimeInterval(60),
+                         served: [served("checkout", "control")]),
+            ])
+
+            #expect(try await client.trackedContexts(project: "demo", environment: "dev").map(\.targetingKey) == ["other", Self.awkwardKey])
+            #expect(try await client.trackedContexts(project: "demo", environment: "dev", since: start.addingTimeInterval(1)).map(\.targetingKey) == ["other"])
+            #expect(try await client.trackedContexts(project: "demo", environment: "dev", limit: 1).count == 1)
+
+            let detail = try await client.trackedContext(Self.awkwardKey, project: "demo", environment: "dev")
+            #expect(detail.context.attributes == ["appVersion": "3.1", "platform": "iOS"])
+            #expect(detail.exposures.map(\.flagKey) == ["beta", "checkout"])
+
+            #expect(try await client.exposures(project: "demo", environment: "dev", flag: "checkout").map(\.variant) == ["control", "test"])
+            #expect(try await client.exposures(project: "demo", environment: "dev", flag: "checkout", variant: "test").map(\.targetingKey) == [Self.awkwardKey])
+            #expect(try await client.exposures(project: "demo", environment: "dev", targetingKey: Self.awkwardKey).count == 2)
+            #expect(try await client.exposures(project: "demo", environment: "dev", since: start.addingTimeInterval(1)).map(\.targetingKey) == ["other"])
+
+            // Taking an attribute off the list deletes its values before the call returns.
+            _ = try await client.setTracking(TrackingSettings(enabled: true, attributes: ["platform"]), project: "demo", environment: "dev")
+            #expect(try await client.trackedContext(Self.awkwardKey, project: "demo", environment: "dev").context.attributes == ["platform": "iOS"])
+
+            try await client.deleteTrackedContext(Self.awkwardKey, project: "demo", environment: "dev")
+            let gone = await #expect(throws: AdminClientError.self) {
+                try await client.trackedContext(Self.awkwardKey, project: "demo", environment: "dev")
+            }
+            #expect(gone?.status == 404)
+            #expect(try await client.exposures(project: "demo", environment: "dev").map(\.targetingKey) == ["other"])
+            let again = await #expect(throws: AdminClientError.self) {
+                try await client.deleteTrackedContext(Self.awkwardKey, project: "demo", environment: "dev")
+            }
+            #expect(again?.status == 404)
+
+            // The deletion is audited, but the key appears nowhere in the audit log.
+            let entries = try await client.audit(project: "demo")
+            #expect(entries.first?.action == "tracking.delete")
+            #expect(entries.first?.environmentID == dev.id)
+            let auditJSON = String(decoding: try JSONEncoder().encode(entries), as: UTF8.self)
+            #expect(!auditJSON.contains("user+1"))
+        }
+    }
+
+    @Test func badRequests() async throws {
+        try await withLiveTrackingServer { client, _, _ in
+            _ = try await client.createProject(key: "demo")
+            _ = try await client.createEnvironment(project: "demo", key: "dev")
+            let invalid = await #expect(throws: AdminClientError.self) {
+                try await client.setTracking(TrackingSettings(retentionDays: 0), project: "demo", environment: "dev")
+            }
+            #expect(invalid?.description == "Invalid (HTTP 400)\n  - retentionDays must be at least 1")
+            let limit = await #expect(throws: AdminClientError.self) {
+                try await client.trackedContexts(project: "demo", environment: "dev", limit: 1_001)
+            }
+            #expect(limit?.status == 400)
+        }
+    }
+
+    @Test func aServerWithoutTrackingSaysSo() async throws {
+        try await withLiveServer { client, _ in
+            _ = try await client.createProject(key: "demo")
+            _ = try await client.createEnvironment(project: "demo", key: "dev")
+            let error = await #expect(throws: AdminClientError.self) { try await client.trackedContexts(project: "demo", environment: "dev") }
+            #expect(error?.description == "This server has no tracking database (HTTP 404)")
+        }
+    }
+}
+
 @Suite struct AdminClientTests {
     @Test func coversTheWholeLifecycle() async throws {
         try await withLiveServer { client, _ in

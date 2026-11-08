@@ -1,5 +1,6 @@
 import Foundation
 import Hummingbird
+import HummingbirdCore
 import NIOCore
 import NIOFoundationCompat
 import WhatFeatureAPI
@@ -11,6 +12,8 @@ struct AdminRoutes {
     typealias Context = WhatFeatureRequestContext
 
     let store: SQLiteStore
+    /// `nil` on a server without a tracking database: settings still work, reading tracking data doesn't.
+    let tracking: TrackingRecorder?
 
     func register(on group: RouterGroup<Context>) {
         typealias Paths = AdminPaths
@@ -43,6 +46,13 @@ struct AdminRoutes {
         group.put(path(Paths.config(.project, .environment, .flag)), use: setConfig)
         group.post(path(Paths.evaluate(.project, .environment, .flag)), use: dryRun)
         group.post(path(Paths.evaluateAll(.project, .environment)), use: dryRunAll)
+
+        group.get(path(Paths.tracking(.project, .environment)), use: getTracking)
+        group.put(path(Paths.tracking(.project, .environment)), use: setTracking)
+        group.get(path(Paths.trackedContexts(.project, .environment)), use: listTrackedContexts)
+        group.get(path(Paths.trackedContext(.project, .environment)), use: getTrackedContext)
+        group.delete(path(Paths.trackedContext(.project, .environment)), use: deleteTrackedContext)
+        group.get(path(Paths.exposures(.project, .environment)), use: listExposures)
 
         group.get(path(Paths.tokens), use: listTokens)
         group.post(path(Paths.tokens), use: createToken)
@@ -238,6 +248,79 @@ struct AdminRoutes {
         )
     }
 
+    // MARK: - Tracking
+
+    @Sendable func getTracking(_ request: Request, context: Context) async throws -> Response {
+        let (_, environment) = try await projectAndEnvironment(context)
+        return try .json(environment.tracking, status: .ok)
+    }
+
+    /// Body: a whole `TrackingSettings`. What the new settings no longer allow (attributes taken off the list, contexts
+    /// past a shorter retention) is deleted before this answers.
+    @Sendable func setTracking(_ request: Request, context: Context) async throws -> Response {
+        let (_, environment) = try await projectAndEnvironment(context)
+        let settings = try await request.decodeJSON(TrackingSettings.self)
+        let saved = try await store.setTracking(settings, environment: environment.id, by: context.actor).tracking
+        try await tracking?.apply(saved, to: environment.id)
+        return try .json(saved, status: .ok)
+    }
+
+    /// Query: `since` (ISO 8601, compared with `lastSeen`), `limit` (1–1000, default 100). Most recently seen first.
+    @Sendable func listTrackedContexts(_ request: Request, context: Context) async throws -> Response {
+        let (_, environment) = try await projectAndEnvironment(context)
+        let query = request.uri.queryParameters
+        let contexts = try await requireTracking().trackingStore.seenContexts(
+            in: environment.id,
+            since: try query.date(AdminPaths.Query.Tracking.since),
+            limit: try query.limit(AdminPaths.Query.Tracking.limit, default: 100, max: 1_000)
+        )
+        return try .json(contexts, status: .ok)
+    }
+
+    /// Query: `targetingKey`. The key's latest attributes and every exposure.
+    @Sendable func getTrackedContext(_ request: Request, context: Context) async throws -> Response {
+        let (_, environment) = try await projectAndEnvironment(context)
+        let targetingKey = try request.uri.queryParameters.targetingKey
+        let trackingStore = try requireTracking().trackingStore
+        guard let seen = try await trackingStore.seenContext(targetingKey, in: environment.id) else {
+            throw StoreError.notFound("Nothing is stored for that targeting key in '\(environment.key)'")
+        }
+        let exposures = try await trackingStore.exposures(in: environment.id, targetingKey: targetingKey)
+        return try .json(TrackedContextDetail(context: seen, exposures: exposures), status: .ok)
+    }
+
+    /// Query: `targetingKey`. Deletes everything stored for it, and audits the deletion without the key.
+    @Sendable func deleteTrackedContext(_ request: Request, context: Context) async throws -> Response {
+        let (_, environment) = try await projectAndEnvironment(context)
+        let targetingKey = try request.uri.queryParameters.targetingKey
+        guard try await requireTracking().deleteContext(targetingKey, in: environment.id) else {
+            throw StoreError.notFound("Nothing is stored for that targeting key in '\(environment.key)'")
+        }
+        try await store.auditTrackingDeletion(in: environment.id, by: context.actor)
+        return Response(status: .noContent)
+    }
+
+    /// Query: `targetingKey`, `flag`, `variant`, `since` (ISO 8601, compared with `lastServed`), `limit` (1–100000,
+    /// default 10000). Sorted by targeting key, flag, then first served.
+    @Sendable func listExposures(_ request: Request, context: Context) async throws -> Response {
+        let (_, environment) = try await projectAndEnvironment(context)
+        let query = request.uri.queryParameters
+        let exposures = try await requireTracking().trackingStore.exposures(
+            in: environment.id,
+            targetingKey: query[Substring(AdminPaths.Query.Tracking.targetingKey)].map(String.init),
+            flagKey: query[Substring(AdminPaths.Query.Tracking.flag)].map(String.init),
+            variant: query[Substring(AdminPaths.Query.Tracking.variant)].map(String.init),
+            since: try query.date(AdminPaths.Query.Tracking.since),
+            limit: try query.limit(AdminPaths.Query.Tracking.limit, default: 10_000, max: 100_000)
+        )
+        return try .json(exposures, status: .ok)
+    }
+
+    private func requireTracking() throws -> TrackingRecorder {
+        guard let tracking else { throw StoreError.notFound("This server has no tracking database") }
+        return tracking
+    }
+
     // MARK: - Tokens
 
     @Sendable func listTokens(_ request: Request, context: Context) async throws -> Response {
@@ -283,25 +366,13 @@ struct AdminRoutes {
             }
             projectID = project.id
         }
-        func date(_ name: Substring) throws -> Date? {
-            guard let value = query[name] else { return nil }
-            guard let date = try? Date(String(value), strategy: .iso8601) else {
-                throw AdminRequestError(message: "'\(name)' must be an ISO 8601 date, like 2026-10-31T12:00:00Z")
-            }
-            return date
-        }
-        let limit = query[Substring(AdminPaths.Query.Audit.limit)].map { Int($0) ?? -1 } ?? 100
-        guard (1...1_000).contains(limit) else {
-            throw AdminRequestError(message: "'limit' must be a number from 1 to 1000")
-        }
-
         let entries = try await store.auditEntries(
             projectID: projectID,
             flagKey: query[Substring(AdminPaths.Query.Audit.flag)].map(String.init),
             actor: query[Substring(AdminPaths.Query.Audit.actor)].map(String.init),
-            since: try date(Substring(AdminPaths.Query.Audit.since)),
-            until: try date(Substring(AdminPaths.Query.Audit.until)),
-            limit: limit
+            since: try query.date(AdminPaths.Query.Audit.since),
+            until: try query.date(AdminPaths.Query.Audit.until),
+            limit: try query.limit(AdminPaths.Query.Audit.limit, default: 100, max: 1_000)
         )
         return try .json(entries.map(AuditEntryResponse.init), status: .ok)
     }
@@ -355,6 +426,33 @@ extension WhatFeatureRequestContext {
 
     var flagKey: String {
         get throws { try parameters.require(AdminPaths.Parameter.flag.rawValue) }
+    }
+}
+
+extension FlatDictionary<Substring, Substring> {
+    func date(_ name: String) throws -> Date? {
+        guard let value = self[Substring(name)] else { return nil }
+        guard let date = try? Date(String(value), strategy: .iso8601) else {
+            throw AdminRequestError(message: "'\(name)' must be an ISO 8601 date, like 2026-10-31T12:00:00Z")
+        }
+        return date
+    }
+
+    func limit(_ name: String, default defaultValue: Int, max: Int) throws -> Int {
+        let limit = self[Substring(name)].map { Int($0) ?? -1 } ?? defaultValue
+        guard (1...max).contains(limit) else {
+            throw AdminRequestError(message: "'\(name)' must be a number from 1 to \(max)")
+        }
+        return limit
+    }
+
+    var targetingKey: String {
+        get throws {
+            guard let key = self[Substring(AdminPaths.Query.Tracking.targetingKey)], !key.isEmpty else {
+                throw AdminRequestError(message: "'\(AdminPaths.Query.Tracking.targetingKey)' is required")
+            }
+            return String(key)
+        }
     }
 }
 

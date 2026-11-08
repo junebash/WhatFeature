@@ -26,7 +26,8 @@ public final class TrackingRecorder: Service, Sendable {
     }
 
     private let store: SQLiteStore
-    private let trackingStore: TrackingStore
+    /// For reading what's been recorded. Changes go through the recorder, so they also apply to the buffer.
+    public let trackingStore: TrackingStore
     private let configuration: Configuration
     private let now: @Sendable () -> Date
     private let logger: Logger
@@ -88,6 +89,27 @@ public final class TrackingRecorder: Service, Sendable {
                 buffer.dropped += 1
             }
         }
+    }
+
+    /// Applies new settings right away, to what's stored and what's buffered (see `TrackingStore.enforce`).
+    public func apply(_ settings: TrackingSettings, to environment: EnvironmentID) async throws {
+        buffer.withLock { buffer in
+            for index in buffer.pending.indices where buffer.pending[index].environmentID == environment {
+                buffer.pending[index].attributes = buffer.pending[index].attributes.filter { settings.attributes.contains($0.key) }
+            }
+        }
+        try await trackingStore.enforce([environment: settings])
+    }
+
+    /// Deletes everything stored or buffered for one targeting key. Returns whether there was anything.
+    public func deleteContext(_ targetingKey: String, in environment: EnvironmentID) async throws -> Bool {
+        let buffered = buffer.withLock { buffer in
+            let count = buffer.pending.count
+            buffer.pending.removeAll { $0.environmentID == environment && $0.targetingKey == targetingKey }
+            return count != buffer.pending.count
+        }
+        let stored = try await trackingStore.deleteContext(targetingKey, in: environment)
+        return buffered || stored
     }
 
     /// Writes everything buffered. A batch that fails to write is logged and lost.

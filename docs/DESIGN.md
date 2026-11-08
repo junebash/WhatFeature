@@ -292,6 +292,10 @@ Auth: `Authorization: Bearer wf_admin_…` (or `X-API-Key`). A missing, unknown 
 | `POST` | `/projects/{project}/environments/{env}/evaluate` | `{context}` | **Dry run of every flag**, like the bulk endpoint (archived flags left out): `{flags: [dry run…], ofrep: {status, body}}` |
 | `GET` / `POST` | `/tokens` | `{name, kind: admin\|evaluation, project?, environment?}` | `{token, secret}`. The secret appears **only** in this response. Lists never show secrets or hashes. |
 | `POST` | `/tokens/{id}/revoke` | | token |
+| `GET` / `PUT` | `/projects/{project}/environments/{env}/tracking` | a whole `TrackingSettings`: `{enabled, attributes, retentionDays}` | the saved settings (attributes sorted, no duplicates). See **Tracking**. |
+| `GET` | `…/environments/{env}/tracking/contexts` | `since` (ISO 8601, against `lastSeen`), `limit` (1–1000, default 100) | seen contexts, most recently seen first |
+| `GET` / `DELETE` | `…/environments/{env}/tracking/context` | `targetingKey` (required) | `{context, exposures}` / `204`. `404` if nothing is stored. The deletion's audit entry (`tracking.delete`) leaves out the key. |
+| `GET` | `…/environments/{env}/tracking/exposures` | `targetingKey`, `flag`, `variant`, `since` (against `lastServed`), `limit` (1–100,000, default 10,000) | exposures, by targeting key, flag, then first served |
 | `GET` | `/audit` | `project=<key>`, `flag`, `actor`, `since` / `until` (ISO 8601), `limit` (1–1000, default 100) | entries, newest first, with `before`/`after` as JSON |
 
 "Flag detail" is `{flag, configs}`, where `configs` maps each environment key to that environment's config. One call shows a flag's state everywhere.
@@ -336,6 +340,9 @@ The one exception is `whatfeature db token …`, which works on the file directl
 | `config rollout <flag> on=10 off=90` | Percentage split of the default (two decimals allowed), keeping rules, and enables |
 | `evaluate <flag>` / `evaluate --all` | The dry run: what a context gets and why, for one flag or all of them. `--app-json` prints exactly the JSON an app would get, and nothing else. |
 | `tokens list\|create\|revoke` | Through the server |
+| `tracking show\|set` | See or change an environment's tracking: `set -e prod --on --attributes appVersion,platform --retention-days 30` |
+| `tracking contexts\|context\|exposures` | Seen IDs, one ID's attributes and exposures, or exposures filtered by flag, variant, ID and time (`--json` to export) |
+| `tracking delete <id>` | Deletes everything stored for an ID; asks for confirmation, like `flags delete` |
 | `audit` | Filters: project, flag, actor, since, until, limit |
 | `db token create\|list\|revoke` | On the database file (bootstrap) |
 
@@ -373,12 +380,12 @@ Written in the same transaction as the change. Never edited or deleted through t
 
 ## Tracking
 
-Partly built: the storage (`TrackingSettings` on `Environment`, `SQLiteStore.setTracking`, `TrackingStore` for the tracking file) and the recorder (`TrackingRecorder`, which `serve` runs). Not yet: the admin API and CLI, so tracking can't be turned on from outside yet (see **Status and roadmap**). **Optional, per environment: the server records who it saw and what it served them**, so I can list the IDs being served, look up one ID's flags and override them with individual targeting, and get assignment data for A/B tests. Modeled on LaunchDarkly's Contexts list and exposure events, with the recording done on the server so apps don't change: `FlagClient` and other OFREP clients work exactly as before.
+**Optional, per environment: the server records who it saw and what it served them**, so I can list the IDs being served, look up one ID's flags and override them with individual targeting, and get assignment data for A/B tests. Modeled on LaunchDarkly's Contexts list and exposure events, with the recording done on the server so apps don't change: `FlagClient` and other OFREP clients work exactly as before.
 
-**Settings live on the environment**, changed through `PATCH …/environments/{env}` (so they're audited like any other admin write):
+**Settings live on the environment**, changed with `PUT …/environments/{env}/tracking` or `whatfeature tracking set` (audited like any other admin write; the environment's version, and so its ETags, stays the same):
 
 - `enabled` — off by default. Upgrading a server never starts storing personal data on its own.
-- `attributes` — an **allowlist** of context attributes to store, e.g. `["appVersion", "platform"]`. Empty by default. An attribute an app starts sending later, like `email`, isn't stored until someone adds it. Removing an attribute from the list deletes its stored values.
+- `attributes` — an **allowlist** of context attributes to store, e.g. `["appVersion", "platform"]`. Empty by default. An attribute an app starts sending later, like `email`, isn't stored until someone adds it. Removing an attribute from the list deletes its stored values before the `PUT` answers, buffered ones included; so does shortening `retentionDays` for contexts now past it.
 - `retentionDays` — 30 by default.
 
 **Two tables:**
@@ -392,7 +399,9 @@ Attributes sit on the seen row, not on each exposure, as in LaunchDarkly (where 
 
 **Retention:** an ID whose `lastSeen` is older than `retentionDays` is deleted, with all its exposures. Seeing the ID again restarts the clock. A sweep runs periodically.
 
-**Deleting by hand:** one admin call deletes everything stored for an ID in an environment (its seen row and every exposure). Its audit entry records that a deletion happened, but **not the ID**, because audit entries are never deleted. Turning tracking off stops recording; what's stored expires on schedule, or can be deleted by hand.
+**Deleting by hand:** one admin call (`whatfeature tracking delete <id> -e <env>`) deletes everything stored or buffered for an ID in an environment (its seen row and every exposure). Its audit entry records that a deletion happened, but **not the ID**, because audit entries are never deleted. Turning tracking off stops recording; what's stored expires on schedule, or can be deleted by hand.
+
+**Reading it:** the admin API below, or `whatfeature tracking contexts|context|exposures`. Targeting keys go in a `targetingKey` query parameter rather than the path, because they can hold any character (`/`, `+`, spaces). Request logs leave out query strings for the same reason (see **Privacy**). Exposures are the export: `whatfeature tracking exposures -e prod --flag checkout --json` gives every field for analysis elsewhere. Overriding what one ID gets is still a `targetingKey in [...]` rule, set with `config set`.
 
 **Kept off the hot path:**
 
@@ -408,7 +417,7 @@ Attributes sit on the seen row, not on each exposure, as in LaunchDarkly (where 
 Evaluation contexts can contain personal information (user IDs, emails). The server:
 
 - uses the context to evaluate, then discards it, unless tracking is on (see **Tracking**)
-- never logs context values. Request logs record the method and path only (for single-flag evaluation, the path includes the flag key).
+- never logs context values. Request logs record the method and path only, never the query string (for single-flag evaluation, the path includes the flag key). Hummingbird's `LogRequestsMiddleware` logs the whole URI, so the server uses its own `LogRequestPathsMiddleware`.
 
 What gets stored is the operator's decision, because the operator owns the data and the privacy policy. Defaults are the cautious choice:
 
@@ -474,6 +483,7 @@ CI (`.github/workflows/ci.yml`) runs `swift test` on every push to `main` and on
 - **`justfile`:** recipes for building, testing, running a dev server, the CLI, and the Docker image.
 - **Deployed** on Railway (see **Deployment**).
 - **Rate limiting:** per admin token, `429` with `Retry-After`. Evaluation tokens are left to a proxy, like the big flag services do (see **Rate limiting**).
+- **Tracking** (off by default): seen contexts and exposures in a separate SQLite file, per-environment settings with an attribute allowlist, retention sweep, deletion by hand, admin API and CLI (see **Tracking**).
 
 ### Left for v1
 
@@ -491,12 +501,12 @@ CI (`.github/workflows/ci.yml`) runs `swift test` on every push to `main` and on
 | Version | Scope |
 |---|---|
 | **v1.1** | SSE, as OFREP defines it (ADR-0008): the bulk response gets an `eventStreams` entry pointing at our SSE endpoint, which sends `{"type": "refetchEvaluation", "etag": …}` when config changes. Clients re-fetch the bulk endpoint. No custom extension needed. |
-| **v1.5** | Tracking (see **Tracking**): seen contexts and exposures, per-environment settings, retention sweep, deletion by hand. Admin API and CLI to list seen IDs, show one ID's attributes and exposures, export exposures for analysis, and add an ID to a flag's individual targeting. |
+| **v1.5** | A shortcut to add a seen ID to a flag's individual targeting (today: edit the config's `targetingKey in [...]` rule with `config set`). |
 | **later** | App attestation (Apple's App Attest) for evaluation requests, UI, scheduled flag changes, flag dependencies, admin roles, Postgres store, experiment analysis |
 
 ## Open questions
 
-- **Tracking's query API and CLI:** paths, filters (since, flag, variant, attribute), and the export format. Decide when building v1.5.
+Nothing open right now.
 
 ## Clients
 

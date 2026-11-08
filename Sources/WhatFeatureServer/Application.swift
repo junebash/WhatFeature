@@ -11,8 +11,8 @@ public func buildApplication(
     tracking: TrackingRecorder? = nil
 ) -> some ApplicationProtocol {
     let router = Router(context: WhatFeatureRequestContext.self)
-    // Logs method and path only. Evaluation contexts are in the body, so they never reach the logs.
-    router.middlewares.add(LogRequestsMiddleware(.info))
+    // Method and path only: evaluation contexts are in the body, and targeting keys in admin queries.
+    router.middlewares.add(LogRequestPathsMiddleware())
 
     router.get("health") { _, _ in "ok" }
 
@@ -27,7 +27,25 @@ public func buildApplication(
     let admin = router.group(RouterPath(AdminPaths.prefix))
         .add(middleware: AdminErrorMiddleware())
         .add(middleware: AdminTokenMiddleware(store: store, rateLimiter: adminRateLimit.map { RateLimiter(limit: $0) }))
-    AdminRoutes(store: store).register(on: admin)
+    AdminRoutes(store: store, tracking: tracking).register(on: admin)
 
     return Application(router: router, configuration: configuration, services: tracking.map { [$0] } ?? [])
+}
+
+/// Like Hummingbird's `LogRequestsMiddleware`, but without the query string, which can hold targeting keys
+/// (e.g. `…/tracking/context?targetingKey=…`).
+struct LogRequestPathsMiddleware: RouterMiddleware {
+    typealias Context = WhatFeatureRequestContext
+
+    func handle(
+        _ request: Request,
+        context: Context,
+        next: @concurrent (Request, Context) async throws -> Response
+    ) async throws -> Response {
+        context.logger.info(
+            "Request",
+            metadata: ["hb.request.path": .string(request.uri.path), "hb.request.method": .string(request.method.rawValue)]
+        )
+        return try await next(request, context)
+    }
 }

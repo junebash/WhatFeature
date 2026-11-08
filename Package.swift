@@ -87,6 +87,7 @@ let package = Package(
                 "WhatFeatureStorage",
                 .product(name: "Crypto", package: "swift-crypto"),
                 .product(name: "Hummingbird", package: "hummingbird", condition: .when(traits: ["Server"])),
+                .product(name: "HummingbirdCore", package: "hummingbird", condition: .when(traits: ["Server"])),
                 .product(name: "HTTPTypes", package: "swift-http-types", condition: .when(traits: ["Server"])),
                 .product(name: "Logging", package: "swift-log", condition: .when(traits: ["Server"])),
                 .product(name: "NIOCore", package: "swift-nio", condition: .when(traits: ["Server"])),

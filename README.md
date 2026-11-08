@@ -151,6 +151,15 @@ See who changed what:
 swift run whatfeature audit --flag dark-mode
 ```
 
+Record who gets what (off by default; see "Tracking" in [`docs/DESIGN.md`](docs/DESIGN.md)), then look:
+
+```bash
+swift run whatfeature tracking set -e dev --on --attributes appVersion
+swift run whatfeature tracking contexts -e dev
+swift run whatfeature tracking context user-123 -e dev
+swift run whatfeature tracking exposures -e dev --flag dark-mode --json
+```
+
 Give an app its evaluation token:
 
 ```bash

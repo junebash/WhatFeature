@@ -138,6 +138,56 @@ public struct AdminClient: Sendable {
         try await send(.POST, AdminPaths.evaluateAll(project, environment), body: DryRunRequest(context: context))
     }
 
+    // MARK: - Tracking
+
+    public func tracking(project: String, environment: String) async throws -> TrackingSettings {
+        try await send(.GET, AdminPaths.tracking(project, environment))
+    }
+
+    /// Returns the saved settings (attributes sorted, without duplicates).
+    public func setTracking(_ settings: TrackingSettings, project: String, environment: String) async throws -> TrackingSettings {
+        try await send(.PUT, AdminPaths.tracking(project, environment), body: settings)
+    }
+
+    /// Most recently seen first.
+    public func trackedContexts(project: String, environment: String, since: Date? = nil, limit: Int? = nil) async throws -> [SeenContext] {
+        var query: [URLQueryItem] = []
+        if let since { query.append(URLQueryItem(name: AdminPaths.Query.Tracking.since, value: since.formatted(.iso8601))) }
+        if let limit { query.append(URLQueryItem(name: AdminPaths.Query.Tracking.limit, value: String(limit))) }
+        return try await send(.GET, AdminPaths.trackedContexts(project, environment), query: query)
+    }
+
+    public func trackedContext(_ targetingKey: String, project: String, environment: String) async throws -> TrackedContextDetail {
+        try await send(.GET, AdminPaths.trackedContext(project, environment), query: Self.targetingKeyQuery(targetingKey))
+    }
+
+    /// Deletes everything stored for the targeting key. Fails with `404` if there was nothing.
+    public func deleteTrackedContext(_ targetingKey: String, project: String, environment: String) async throws {
+        let _: Empty = try await send(.DELETE, AdminPaths.trackedContext(project, environment), query: Self.targetingKeyQuery(targetingKey))
+    }
+
+    public func exposures(
+        project: String,
+        environment: String,
+        targetingKey: String? = nil,
+        flag: String? = nil,
+        variant: String? = nil,
+        since: Date? = nil,
+        limit: Int? = nil
+    ) async throws -> [Exposure] {
+        var query: [URLQueryItem] = []
+        if let targetingKey { query += Self.targetingKeyQuery(targetingKey) }
+        if let flag { query.append(URLQueryItem(name: AdminPaths.Query.Tracking.flag, value: flag)) }
+        if let variant { query.append(URLQueryItem(name: AdminPaths.Query.Tracking.variant, value: variant)) }
+        if let since { query.append(URLQueryItem(name: AdminPaths.Query.Tracking.since, value: since.formatted(.iso8601))) }
+        if let limit { query.append(URLQueryItem(name: AdminPaths.Query.Tracking.limit, value: String(limit))) }
+        return try await send(.GET, AdminPaths.exposures(project, environment), query: query)
+    }
+
+    private static func targetingKeyQuery(_ targetingKey: String) -> [URLQueryItem] {
+        [URLQueryItem(name: AdminPaths.Query.Tracking.targetingKey, value: targetingKey)]
+    }
+
     // MARK: - Tokens
 
     public func tokens() async throws -> [Token] {

@@ -30,6 +30,15 @@ public enum AdminPaths {
         self.environment(project, environment) + "/evaluate"
     }
 
+    /// An environment's `TrackingSettings`.
+    public static func tracking(_ project: String, _ environment: String) -> String { self.environment(project, environment) + "/tracking" }
+    /// Seen targeting keys, most recent first.
+    public static func trackedContexts(_ project: String, _ environment: String) -> String { tracking(project, environment) + "/contexts" }
+    /// One targeting key, given as the `targetingKey` query parameter: targeting keys can hold any character, and
+    /// request logs record paths only.
+    public static func trackedContext(_ project: String, _ environment: String) -> String { tracking(project, environment) + "/context" }
+    public static func exposures(_ project: String, _ environment: String) -> String { tracking(project, environment) + "/exposures" }
+
     public static let tokens = "tokens"
     public static func revokeToken(_ id: String) -> String { "tokens/\(id)/revoke" }
 
@@ -52,6 +61,14 @@ public enum AdminPaths {
             public static let createdBy = "createdBy"
             public static let sort = "sort"
             public static let order = "order"
+        }
+
+        public enum Tracking {
+            public static let targetingKey = "targetingKey"
+            public static let flag = "flag"
+            public static let variant = "variant"
+            public static let since = "since"
+            public static let limit = "limit"
         }
 
         public enum Audit {
@@ -84,4 +101,16 @@ extension AdminPaths {
         evaluateAll(project.placeholder, environment.placeholder)
     }
     public static func revokeToken(_ id: Parameter) -> String { revokeToken(id.placeholder) }
+    public static func tracking(_ project: Parameter, _ environment: Parameter) -> String {
+        tracking(project.placeholder, environment.placeholder)
+    }
+    public static func trackedContexts(_ project: Parameter, _ environment: Parameter) -> String {
+        trackedContexts(project.placeholder, environment.placeholder)
+    }
+    public static func trackedContext(_ project: Parameter, _ environment: Parameter) -> String {
+        trackedContext(project.placeholder, environment.placeholder)
+    }
+    public static func exposures(_ project: Parameter, _ environment: Parameter) -> String {
+        exposures(project.placeholder, environment.placeholder)
+    }
 }

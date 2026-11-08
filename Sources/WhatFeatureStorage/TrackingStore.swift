@@ -145,13 +145,25 @@ public final class TrackingStore: Sendable {
         }
     }
 
-    /// Sorted by targeting key, flag, then when first served. Both filters are optional.
-    public func exposures(in environmentID: EnvironmentID, targetingKey: String? = nil, flagKey: String? = nil) async throws -> [Exposure] {
+    /// Sorted by targeting key, flag, then when first served. Every filter is optional. `since` (inclusive) is
+    /// compared with `lastServed`.
+    public func exposures(
+        in environmentID: EnvironmentID,
+        targetingKey: String? = nil,
+        flagKey: String? = nil,
+        variant: String? = nil,
+        since: Date? = nil,
+        limit: Int? = nil
+    ) async throws -> [Exposure] {
         try await database.read { db in
             var request = ExposureRecord.filter(Column("environmentID") == environmentID.rawValue)
             if let targetingKey { request = request.filter(Column("targetingKey") == targetingKey) }
             if let flagKey { request = request.filter(Column("flagKey") == flagKey) }
-            return try request.order(Column("targetingKey"), Column("flagKey"), Column("firstServed")).fetchAll(db).map(\.model)
+            if let variant { request = request.filter(Column("variant") == variant) }
+            if let since { request = request.filter(Column("lastServed") >= since) }
+            request = request.order(Column("targetingKey"), Column("flagKey"), Column("firstServed"))
+            if let limit { request = request.limit(limit) }
+            return try request.fetchAll(db).map(\.model)
         }
     }
 

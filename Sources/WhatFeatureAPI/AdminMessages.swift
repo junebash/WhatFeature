@@ -180,6 +180,17 @@ public struct AuditEntryResponse: Sendable, Codable, Hashable {
     }
 }
 
+/// Everything tracking holds for one targeting key in one environment.
+public struct TrackedContextDetail: Sendable, Codable, Hashable {
+    public var context: SeenContext
+    public var exposures: [Exposure]
+
+    public init(context: SeenContext, exposures: [Exposure]) {
+        self.context = context
+        self.exposures = exposures
+    }
+}
+
 /// The body of every admin API error: `{"error": "…", "issues": ["…"]}`.
 public struct AdminErrorBody: Sendable, Codable, Hashable {
     public var error: String

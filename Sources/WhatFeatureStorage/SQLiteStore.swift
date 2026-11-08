@@ -241,6 +241,17 @@ public final class SQLiteStore: EvaluationStore {
         }
     }
 
+    /// Records that someone deleted a targeting key's tracking data, without the key: audit entries are never
+    /// deleted, so the key would outlive the deletion.
+    public func auditTrackingDeletion(in environmentID: EnvironmentID, by actor: AuditActor) async throws {
+        try await database.write { db in
+            guard let record = try EnvironmentRecord.fetchOne(db, key: environmentID.rawValue) else {
+                throw StoreError.notFound("No environment with ID '\(environmentID)'")
+            }
+            try self.audit(db, actor, "tracking.delete", project: ProjectID(record.projectID), environment: environmentID)
+        }
+    }
+
     public func environment(key: String, in projectID: ProjectID) async throws -> Environment? {
         try await database.read { db in
             try EnvironmentRecord.filter(Column("projectID") == projectID.rawValue && Column("key") == key).fetchOne(db)?.model

@@ -54,7 +54,7 @@ struct WhatFeatureCommand: AsyncParsableCommand {
             Serve.self,
             Login.self, Logout.self, WhoAmI.self,
             ProjectsCommand.self, EnvironmentsCommand.self, FlagsCommand.self, ConfigCommand.self,
-            Evaluate.self, TokensCommand.self, AuditCommand.self,
+            Evaluate.self, TrackingCommand.self, TokensCommand.self, AuditCommand.self,
             DatabaseCommand.self,
         ],
         defaultSubcommand: Serve.self

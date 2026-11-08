@@ -703,6 +703,196 @@ extension ProjectOption {
     }
 }
 
+// MARK: - Tracking
+
+struct TrackingCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "tracking",
+        abstract: "Turn tracking on or off, and see or delete what it recorded: who was seen, and what they were served.",
+        discussion: "Off by default. See \"Tracking\" in docs/DESIGN.md for what's stored and for how long.",
+        subcommands: [Show.self, Set.self, Contexts.self, Context.self, Exposures.self, Delete.self],
+        defaultSubcommand: Show.self
+    )
+
+    /// The arguments every tracking command takes.
+    struct Target: ParsableArguments {
+        @OptionGroup var connection: ConnectionOptions
+        @OptionGroup var project: ProjectOption
+        @OptionGroup var environment: EnvironmentOption
+
+        func run<T>(_ work: (AdminClient, _ project: String, _ environment: String) async throws -> T) async throws -> T {
+            let projectKey = try await project.resolve()
+            return try await withServer(try await connection.makeClient()) { try await work($0, projectKey, environment.environment) }
+        }
+    }
+
+    struct Show: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Show an environment's tracking settings.")
+        @OptionGroup var target: Target
+        @OptionGroup var output: OutputOptions
+
+        func run() async throws {
+            let settings = try await target.run { try await $0.tracking(project: $1, environment: $2) }
+            if output.json { return try await printJSON(settings) }
+            try await printTrackingSettings(settings, environment: target.environment.environment)
+        }
+    }
+
+    enum State: String, EnumerableFlag {
+        case on, off
+        static func help(for value: Self) -> ArgumentHelp? { value == .on ? "Start recording." : "Stop recording (what's stored still expires)." }
+    }
+
+    struct Set: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Change an environment's tracking settings. Anything not passed stays as it is.",
+            discussion: """
+            e.g. whatfeature tracking set -e prod --on --attributes appVersion,platform
+            --attributes replaces the whole list; --attributes "" stores no attributes. Attributes taken off the list, \
+            and contexts older than a shorter --retention-days, are deleted right away.
+            """
+        )
+        @OptionGroup var target: Target
+        @Flag var state: State?
+        @Option(help: "Context attributes to store besides the targeting key, comma-separated.") var attributes: String?
+        @Option(help: "Delete contexts not seen for this many days.") var retentionDays: Int?
+
+        func validate() throws {
+            if state == nil, attributes == nil, retentionDays == nil {
+                throw ValidationError("Nothing to change. Pass --on, --off, --attributes or --retention-days.")
+            }
+        }
+
+        func run() async throws {
+            let saved = try await target.run { client, project, environment in
+                var settings = try await client.tracking(project: project, environment: environment)
+                if let state { settings.enabled = state == .on }
+                if let attributes {
+                    settings.attributes = attributes.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                }
+                if let retentionDays { settings.retentionDays = retentionDays }
+                return try await client.setTracking(settings, project: project, environment: environment)
+            }
+            try await printTrackingSettings(saved, environment: target.environment.environment)
+        }
+    }
+
+    struct Contexts: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "List targeting keys seen, most recent first.")
+        @OptionGroup var target: Target
+        @OptionGroup var output: OutputOptions
+        @Option(help: "Only those seen since this time (ISO 8601).") var since: String?
+        @Option(help: "At most this many (1–1000).") var limit: Int = 100
+
+        func run() async throws {
+            let sinceDate = try parseTime(since, "since")
+            let contexts = try await target.run { try await $0.trackedContexts(project: $1, environment: $2, since: sinceDate, limit: limit) }
+            if output.json { return try await printJSON(contexts) }
+            if contexts.isEmpty { return try await writeLine("Nothing recorded.") }
+            try await printTable(
+                ["TARGETING KEY", "LAST SEEN", "FIRST SEEN", "ATTRIBUTES"],
+                contexts.map { [$0.targetingKey, format($0.lastSeen), format($0.firstSeen), compactJSON(.object($0.attributes))] }
+            )
+        }
+    }
+
+    struct Context: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Show what's stored for one targeting key: its latest attributes and every variant it was served.",
+            discussion: "To change what it gets, add it to a rule (`targetingKey in [...]`) with `whatfeature config set`."
+        )
+        @OptionGroup var target: Target
+        @OptionGroup var output: OutputOptions
+        @Argument(help: "The targeting key (user or device ID).") var targetingKey: String
+
+        func run() async throws {
+            let detail = try await target.run { try await $0.trackedContext(targetingKey, project: $1, environment: $2) }
+            if output.json { return try await printJSON(detail) }
+            let context = detail.context
+            try await writeLine("\(context.targetingKey) in \(target.environment.environment)")
+            try await writeLine("Seen: \(format(context.firstSeen)) to \(format(context.lastSeen))")
+            try await writeLine("Attributes: \(compactJSON(.object(context.attributes)))")
+            try await writeLine("")
+            try await printExposures(detail.exposures, includeKey: false)
+        }
+    }
+
+    struct Exposures: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "List what was served to whom. --json gives every field, for analysis elsewhere.",
+            discussion: "e.g. whatfeature tracking exposures -e prod --flag checkout --json > checkout.json"
+        )
+        @OptionGroup var target: Target
+        @OptionGroup var output: OutputOptions
+        @Option(help: "Only this flag.") var flag: String?
+        @Option(help: "Only this variant.") var variant: String?
+        @Option(help: "Only this targeting key.") var targetingKey: String?
+        @Option(help: "Only those served since this time (ISO 8601).") var since: String?
+        @Option(help: "At most this many (1–100000).") var limit: Int = 10_000
+
+        func run() async throws {
+            let sinceDate = try parseTime(since, "since")
+            let exposures = try await target.run {
+                try await $0.exposures(
+                    project: $1, environment: $2, targetingKey: targetingKey, flag: flag, variant: variant, since: sinceDate, limit: limit
+                )
+            }
+            if output.json { return try await printJSON(exposures) }
+            try await printExposures(exposures, includeKey: true)
+        }
+    }
+
+    struct Delete: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Delete everything stored for one targeting key in one environment. Can't be undone.",
+            discussion: "The audit log records that a deletion happened, but not the targeting key."
+        )
+        @OptionGroup var target: Target
+        @Argument(help: "The targeting key (user or device ID).") var targetingKey: String
+        @Flag(help: "Don't ask for confirmation.") var yes = false
+
+        func run() async throws {
+            let environment = target.environment.environment
+            let question = "Delete everything stored for this targeting key in \(environment)? Type the targeting key to confirm:"
+            if !yes, try await !confirm(question, expecting: targetingKey) {
+                throw CLIError("Not deleted. (Pass --yes to skip the question.)")
+            }
+            try await target.run { try await $0.deleteTrackedContext(targetingKey, project: $1, environment: $2) }
+            try await writeLine("Deleted what was stored for \(targetingKey) in \(environment).")
+        }
+    }
+}
+
+func parseTime(_ text: String?, _ name: String) throws -> Date? {
+    guard let text else { return nil }
+    guard let date = try? Date(text, strategy: .iso8601) else {
+        throw ValidationError("--\(name) must be an ISO 8601 time, like 2026-10-31T12:00:00Z.")
+    }
+    return date
+}
+
+private func printTrackingSettings(_ settings: TrackingSettings, environment: String) async throws {
+    try await writeLine("Tracking in \(environment): \(settings.enabled ? "on" : "off")")
+    try await writeLine("Attributes stored: " + (settings.attributes.isEmpty ? "none (targeting key only)" : settings.attributes.joined(separator: ", ")))
+    try await writeLine("Kept for: \(settings.retentionDays) days after last seen")
+}
+
+private func printExposures(_ exposures: [Exposure], includeKey: Bool) async throws {
+    if exposures.isEmpty { return try await writeLine("No exposures.") }
+    let headers = ["FLAG", "VARIANT", "REASON", "FIRST SERVED", "LAST SERVED", "CONFIG"]
+    try await printTable(
+        (includeKey ? ["TARGETING KEY"] : []) + headers,
+        exposures.map { exposure in
+            let why = exposure.matchedRule.map { " (rule \($0))" } ?? ""
+            let row = [
+                exposure.flagKey, exposure.variant, exposure.reason.rawValue + why,
+                format(exposure.firstServed), format(exposure.lastServed), "v\(exposure.configVersion)",
+            ]
+            return (includeKey ? [exposure.targetingKey] : []) + row
+        }
+    )
+}
+
 // MARK: - Audit
 
 struct AuditCommand: AsyncParsableCommand {
@@ -721,15 +911,8 @@ struct AuditCommand: AsyncParsableCommand {
     @Option(help: "At most this many entries (1–1000).") var limit: Int = 50
 
     func run() async throws {
-        func date(_ text: String?, _ name: String) throws -> Date? {
-            guard let text else { return nil }
-            guard let date = try? Date(text, strategy: .iso8601) else {
-                throw ValidationError("--\(name) must be an ISO 8601 time, like 2026-10-31T12:00:00Z.")
-            }
-            return date
-        }
-        let sinceDate = try date(since, "since")
-        let untilDate = try date(until, "until")
+        let sinceDate = try parseTime(since, "since")
+        let untilDate = try parseTime(until, "until")
         let entries = try await withServer(try await connection.makeClient()) {
             try await $0.audit(project: project, flag: flag, actor: actor, since: sinceDate, until: untilDate, limit: limit)
         }

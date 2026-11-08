@@ -4,6 +4,7 @@ import HummingbirdTesting
 import NIOPosix
 import Synchronization
 import Testing
+import WhatFeatureCore
 import WhatFeatureServer
 import WhatFeatureStorage
 @testable import whatfeature
@@ -47,6 +48,14 @@ private final class FakeTerminal: Terminal {
     }
 }
 
+extension JSONDecoder {
+    static var iso8601: JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }
+}
+
 private struct CommandResult {
     var status: Int32
     var output: String
@@ -55,6 +64,8 @@ private struct CommandResult {
 
 /// A server with one admin token, plus a settings file of the test's own.
 private struct Setup: Sendable {
+    var store: SQLiteStore
+    var trackingStore: TrackingStore
     var url: String
     var token: String
     var settingsFile: URL
@@ -97,9 +108,13 @@ private func withServer(_ test: @Sendable (Setup) async throws -> Void) async th
     defer { try? FileManager.default.removeItem(at: directory) }
     let store = try SQLiteStore.inMemory()
     let admin = try await store.createAdminToken(name: "test", by: .system("test"))
-    try await buildApplication(store: store).test(.live) { client in
+    let trackingStore = try TrackingStore.inMemory()
+    let recorder = TrackingRecorder(store: store, trackingStore: trackingStore)
+    try await buildApplication(store: store, tracking: recorder).test(.live) { client in
         let port = try #require(client.port)
         try await test(Setup(
+            store: store,
+            trackingStore: trackingStore,
             url: "http://localhost:\(port)",
             token: admin.secret,
             settingsFile: directory.appending(path: "whatfeature/config.json")
@@ -186,6 +201,43 @@ private func withServer(_ test: @Sendable (Setup) async throws -> Void) async th
             let set = await cli.run("config", "set", "beta", "-e", "dev", "-", terminal: FakeTerminal(input: [config]))
             #expect(set.status == 0, "\(set.errors)")
             #expect(await cli.succeed("evaluate", "beta", "-e", "dev", "--app-json") == #"{"key":"beta","reason":"STATIC","value":true,"variant":"on"}"# + "\n")
+        }
+    }
+
+    @Test func tracking() async throws {
+        try await withServer { cli in
+            await cli.succeed("projects", "create", "demo")
+            await cli.succeed("environments", "create", "dev")
+            #expect(await cli.succeed("tracking", "-e", "dev").hasPrefix("Tracking in dev: off\n"))
+            #expect(await cli.run("tracking", "set", "-e", "dev").errors.contains("Nothing to change"))
+
+            let set = await cli.succeed("tracking", "set", "-e", "dev", "--on", "--attributes", "platform, appVersion", "--retention-days", "14")
+            #expect(set == "Tracking in dev: on\nAttributes stored: appVersion, platform\nKept for: 14 days after last seen\n")
+
+            let project = try #require(try await cli.store.project(key: "demo"))
+            let dev = try #require(try await cli.store.environment(key: "dev", in: project.id)).id
+            let time = Date(timeIntervalSince1970: 1_800_000_000)
+            try await cli.trackingStore.record([
+                Sighting(environmentID: dev, targetingKey: "device-1", attributes: ["platform": "iOS"], time: time, served: [
+                    Sighting.Served(flagKey: "checkout", variant: "test", reason: .targetingMatch, matchedRule: 2, configVersion: 5),
+                ]),
+            ])
+
+            #expect(await cli.succeed("tracking", "contexts", "-e", "dev").contains(#"device-1       2027-01-15T08:00:00Z  2027-01-15T08:00:00Z  {"platform":"iOS"}"#))
+            let context = await cli.succeed("tracking", "context", "device-1", "-e", "dev")
+            #expect(context.contains("Attributes: {\"platform\":\"iOS\"}"))
+            #expect(context.contains("checkout  test     TARGETING_MATCH (rule 2)"))
+            let json = await cli.succeed("tracking", "exposures", "-e", "dev", "--flag", "checkout", "--json")
+            let exposures = try JSONDecoder.iso8601.decode([Exposure].self, from: Data(json.utf8))
+            #expect(exposures.map(\.targetingKey) == ["device-1"])
+            #expect(await cli.succeed("tracking", "exposures", "-e", "dev", "--variant", "control") == "No exposures.\n")
+
+            let refused = await cli.run("tracking", "delete", "device-1", "-e", "dev", terminal: FakeTerminal(input: ["yes"], isInteractive: true))
+            #expect(refused.errors.contains("Not deleted"))
+            let deleted = await cli.run("tracking", "delete", "device-1", "-e", "dev", terminal: FakeTerminal(input: ["device-1"], isInteractive: true))
+            #expect(deleted.status == 0, "\(deleted.errors)")
+            #expect(await cli.succeed("tracking", "contexts", "-e", "dev") == "Nothing recorded.\n")
+            #expect(await cli.run("tracking", "delete", "device-1", "-e", "dev", "--yes").errors.contains("Nothing is stored"))
         }
     }
 
