@@ -750,6 +750,7 @@ struct TrackingCommand: AsyncParsableCommand {
             e.g. whatfeature tracking set -e prod --on --attributes appVersion,platform
             --attributes replaces the whole list; --attributes "" stores no attributes. Attributes taken off the list, \
             and contexts older than a shorter --retention-days, are deleted right away.
+            Targeting keys are personal data under GDPR and similar laws; mention tracking in your privacy policy.
             """
         )
         @OptionGroup var target: Target
@@ -820,7 +821,10 @@ struct TrackingCommand: AsyncParsableCommand {
     struct Exposures: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             abstract: "List what was served to whom. --json gives every field, for analysis elsewhere.",
-            discussion: "e.g. whatfeature tracking exposures -e prod --flag checkout --json > checkout.json"
+            discussion: """
+            e.g. whatfeature tracking exposures -e prod --flag checkout --json > checkout.json
+            An exposure means the server sent that variant to that targeting key, not that the user saw the feature.
+            """
         )
         @OptionGroup var target: Target
         @OptionGroup var output: OutputOptions

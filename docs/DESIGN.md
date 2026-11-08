@@ -61,6 +61,8 @@ It is also a learning project: the point is to understand how a flag service wor
 
 Evaluation never touches the database for flags. Each environment's flags are held in memory as an immutable snapshot with a version number. An admin write updates SQLite, then swaps in a new snapshot. A slow read can't overwrite a newer snapshot, because the cache keeps whichever version is higher.
 
+With tracking on (see **Tracking**), each OFREP request also adds a record to an in-memory buffer, which `TrackingRecorder` writes to a second SQLite file every few seconds.
+
 Tokens are *not* cached: each request does one indexed lookup. So a token revoked from the CLI stops working immediately, even on a running server. Flags, on the other hand, should only be changed by the server process; another process writing flags to the same file wouldn't refresh the server's snapshots.
 
 ### Swift package layout
@@ -68,9 +70,9 @@ Tokens are *not* cached: each request does one indexed lookup. So a token revoke
 | Target | Kind | Contents |
 |---|---|---|
 | `WhatFeatureCore` | library | Models, rule types, evaluation (`EnvironmentSnapshot.evaluate`), bucketing hash, validation. No networking, no database. Most tests live here. |
-| `WhatFeatureStorage` | library | `EvaluationStore` protocol, `SQLiteStore` (schema, migrations, snapshot cache, tokens, audit log), seed-file loading. Depends on Core. |
+| `WhatFeatureStorage` | library | `EvaluationStore` protocol, `SQLiteStore` (schema, migrations, snapshot cache, tokens, audit log), `TrackingStore` (the tracking file), seed-file loading. Depends on Core. |
 | `WhatFeatureAPI` | library | Admin API request/response types and `AdminPaths` (every path and query name), shared by server and client so they can't drift apart. |
-| `WhatFeatureServer` | library | Hummingbird app, OFREP and admin routes, token middleware, ETags. |
+| `WhatFeatureServer` | library | Hummingbird app, OFREP and admin routes, token middleware, ETags, `TrackingRecorder` (buffers tracking records and writes them, as a service of the app). |
 | `WhatFeatureClient` | library | `AdminClient`: a typed client for the admin API (AsyncHTTPClient). |
 | `WhatFeatureFlags` | library | `FlagClient` and `FlagCache`: what apps use to get flag values (see **Clients**). Depends only on Core, Foundation and swift-crypto, so it builds for iOS. |
 | `whatfeature` | executable | The server (`serve`) and the admin CLI (see **CLI**). Migrations run automatically whenever the database opens. |
@@ -96,6 +98,8 @@ AuditEntry   (one per admin write)
 ```
 
 In SQLite these are the tables `project`, `environment`, `flag`, `flagConfig`, `token` and `auditEntry`. A flag config's rules are stored as one JSON column rather than separate tables: they're nested and always read together, so splitting them up would only add joins.
+
+Tracking data lives in a separate file, in the tables `seenContext` and `exposure` (see **Tracking**). An environment's tracking settings are a JSON column, `tracking`, on `environment`.
 
 Every flag has a config in every environment of its project. A new flag gets a **disabled** config everywhere, and a new environment gets a disabled config for every existing flag. So "is it on in prod?" never depends on whether someone remembered to create a config.
 
@@ -462,6 +466,8 @@ Constraints that keep changing hosts easy:
 - **SSE (v1.1) needs a long-lived process.** Hosts that scale to zero, or bill for open connections, get worse once streaming arrives.
 
 *Considered:* Oracle Cloud's free tier, Google Cloud Run (needs a fix for SQLite on its temporary disk, e.g. Litestream), or hardware at home behind Cloudflare Tunnel.
+
+The tracking database, if used, sits next to the main one on the volume (`/data/whatfeature-tracking.sqlite`).
 
 Not done yet: backups (Railway's volume backups need its Pro plan), and per-IP limits for evaluation (see **Rate limiting**).
 
