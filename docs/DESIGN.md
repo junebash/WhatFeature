@@ -10,7 +10,6 @@ It is also a learning project: the point is to understand how a flag service wor
 
 ### Non-goals (for now)
 
-- A UI. Everything is REST.
 - Client-side evaluation. Rules never leave the server.
 - Experiment analysis (did variant B win?). Tracking records who was served what; the statistics happen elsewhere.
 - Multiple instances / high availability.
@@ -30,6 +29,7 @@ It is also a learning project: the point is to understand how a flag service wor
 | Rollouts | Sticky percentage splits using a stable hash of the targeting key |
 | Auth | Revocable, scoped bearer tokens for both admin and evaluation |
 | Audit log | Yes, from v1 |
+| Admin UI | Vue 3 + Vite, served by the server at `/ui/`, calling the admin API (see **Web UI**) |
 | Change updates | v1: ETag on bulk evaluation. v1.1: SSE `refetchEvaluation` events, as OFREP defines them |
 | Evaluation contexts | Never logged. Not stored unless tracking is turned on for an environment; then only the targeting key and allowlisted attributes, kept 30 days by default (see **Tracking**) |
 | Deployment | Single container, config from env vars. Host not chosen yet. |
@@ -38,7 +38,7 @@ It is also a learning project: the point is to understand how a flag service wor
 ## Architecture
 
 ```
-          apps (WhatFeatureFlags, or any OFREP client)   me (whatfeature CLI)
+          apps (WhatFeatureFlags, or any OFREP client)   me (whatfeature CLI, browser UI)
                          │                                     │
               POST /ofrep/v1/evaluate/...            /admin/v1/...
                          │                                     │
@@ -76,6 +76,8 @@ Tokens are *not* cached: each request does one indexed lookup. So a token revoke
 | `WhatFeatureClient` | library | `AdminClient`: a typed client for the admin API (AsyncHTTPClient). |
 | `WhatFeatureFlags` | library | `FlagClient` and `FlagCache`: what apps use to get flag values (see **Clients**). Depends only on Core, Foundation and swift-crypto, so it builds for iOS. |
 | `whatfeature` | executable | The server (`serve`) and the admin CLI (see **CLI**). Migrations run automatically whenever the database opens. |
+
+The browser UI is in `ui/`, outside the Swift package (see **Web UI**).
 
 **One package, one trait.** Every dependency except swift-crypto is used only by the server, CLI and admin client, and each is behind the `Server` trait (on by default). An app that adds the package with `traits: []` fetches swift-crypto and swift-asn1 and nothing else, instead of 26 packages, because SwiftPM skips dependencies only disabled traits need. With the trait off, only `WhatFeatureCore` and `WhatFeatureFlags` build. *Considered:* a separate client package or repo; the trait gets the same result without moving code or versioning two packages.
 
@@ -270,7 +272,7 @@ Environment versions are stored in the database, so ETags stay valid across rest
 - **Any origin** (`Access-Control-Allow-Origin: *`). Evaluation tokens are public and read-only anyway (see **Auth and tokens**); an origin list would protect nothing and need updating for every new app. No credentials mode: the token is a header, not a cookie.
 - **Preflights** (`OPTIONS` with `Origin`) get `204` without a token check, allowing `POST` and the headers `Authorization`, `X-API-Key`, `Content-Type` and `If-None-Match`, cached for a day (`Access-Control-Max-Age: 86400`; browsers cap it lower).
 - **Responses**, `401`s and `304`s included, carry `Access-Control-Allow-Origin: *` and `Access-Control-Expose-Headers: ETag`, so the app can read the ETag and send it back.
-- **The admin API has no CORS.** Admin tokens are secrets; no browser page should hold one.
+- **The admin API has no CORS.** Admin tokens are secrets; the only page that holds one is the server's own UI, on the same origin (see **Web UI**).
 - Hummingbird's `CORSMiddleware` isn't used: it sends `Access-Control-Expose-Headers` only on preflights, where browsers ignore it.
 
 ### Admin (`/admin/v1`)
@@ -362,6 +364,20 @@ Parsing rules worth knowing:
 
 - **`--attr name=value` is always a string.** Otherwise `appVersion=2.0` would become the number 2.0 and silently stop matching semver rules. `--attr-json` is for typed values.
 - **`--variant name=value` is read according to the flag's type**: `true`/`false` for booleans, plain text for strings, numbers for numbers, JSON for objects.
+
+## Web UI
+
+A browser UI for everything the admin API does: projects and environments, flags and their configs in every environment (rules, conditions, rollouts, the kill switch), dry runs, tracking settings and data, tokens, and the audit log. Like the CLI, it only calls the admin API, so changes are audited under the signed-in token and the server's snapshots stay current.
+
+- **Vue 3, Vite and TypeScript, in `ui/`.** Vue because it's small, needs no JSX, and a single-file component keeps a page's template, logic and styles together. The only runtime dependencies are `vue` and `vue-router`; no component library or CSS framework, just one stylesheet with light and dark themes. About 45 KB gzipped for the first page.
+- **The server serves it at `/ui/`** from a folder: `serve --ui-directory` / `UI_DIRECTORY`. The Docker image builds the UI in its first stage and sets `UI_DIRECTORY`. Without the option nothing is served. `/` redirects to `/ui/`. URLs are hash URLs (`/ui/#/projects/demo/flags`), so the server only ever serves files. `index.html` is `no-cache`; the assets have hashed names and are cached for a year. Only requests no route matched reach the files, so the API can't be shadowed.
+- **Same origin as the admin API, so still no CORS.** Sign in with an admin token. It's checked with `GET /me`, then kept in `sessionStorage` (gone when the tab closes), or in `localStorage` if "Remember on this device" is ticked. A `401` signs out.
+- **The page holds an admin token, so it's locked down:** `Content-Security-Policy: default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'` (no inline or third-party scripts, no framing), `Referrer-Policy: no-referrer` and `X-Content-Type-Options: nosniff`. Vue escapes everything it renders.
+- **It mirrors the API; it doesn't redefine it.** `ui/src/api.ts` types every endpoint by hand from `AdminMessages` and the models. Validation stays on the server. The UI points out problems early (a rollout that doesn't add up to 100%, a variant that doesn't exist) and shows the server's `issues` when it refuses a save.
+- **Config edits are drafts until saved**, one per environment; leaving with unsaved changes asks first. The enable switch saves at once (it's the kill switch), keeping the saved rules. The flag page's dry run uses the saved config and highlights the rule that matched.
+- **Query strings are percent-encoded by hand**, not with `URLSearchParams`, which writes a space as `+`. The server reads `+` as a plus, so a targeting key like `device 42` wouldn't be found.
+- *Considered:* Svelte (just as small; Vue's docs and community are bigger for someone new to web UI), React (more to learn and more to bring in), htmx with HTML rendered by the server (templates and form handling on the server, when the admin API already exists), and embedding the files in the binary (SwiftPM resources need a bundle next to the binary, which the static release CLI doesn't have).
+- **Tests:** Vitest for the pure helpers in `ui/src/model.ts` and the query encoding (`just ui-test` also type-checks); `WebUITests` for the serving and headers. CI type-checks, tests and builds the UI, and the Docker job checks that `/ui/` answers.
 
 ## Auth and tokens
 
@@ -473,7 +489,7 @@ Not done yet: backups (Railway's volume backups need its Pro plan), and per-IP l
 
 ## Status and roadmap
 
-CI (`.github/workflows/ci.yml`) runs `swift test` on every push to `main` and on pull requests, on Linux (the `swift:6.4.2-noble` container, where the server runs) and macOS (the `macos-26` image's default Xcode, where the CLI and development run).
+CI (`.github/workflows/ci.yml`) runs `swift test` on every push to `main` and on pull requests, on Linux (the `swift:6.4.2-noble` container, where the server runs) and macOS (the `macos-26` image's default Xcode, where the CLI and development run). It also type-checks, tests and builds the browser UI.
 
 ### Done
 
@@ -485,10 +501,11 @@ CI (`.github/workflows/ci.yml`) runs `swift test` on every push to `main` and on
 - **CLI:** every admin task, through the admin API (see **CLI**), plus `db token` for bootstrapping.
 - **A/B assignment:** sticky rollouts, plus the `isExperiment` marker on flags, sent to apps as OFREP flag metadata (`"experiment": true`).
 - **CI:** `swift test` on Linux and macOS, and a job that builds the Docker image, starts it, and checks the admin API and OFREP answer.
-- **Docker image:** two stages, building with `swift:6.4.2-noble` and running on `ubuntu:noble` with the Swift runtime and Foundation linked statically. The binary needs only `libsqlite3`, `libstdc++`, `libgcc` and `zlib` besides libc (checked with `ldd`). Runs as a non-root user, data on the `/data` volume.
+- **Docker image:** three stages: the UI built with `node:24-slim`, the server built with `swift:6.4.2-noble`, and the two run on `ubuntu:noble`, with the Swift runtime and Foundation linked statically. The binary needs only `libsqlite3`, `libstdc++`, `libgcc` and `zlib` besides libc (checked with `ldd`). Runs as a non-root user, data on the `/data` volume.
 - **`justfile`:** recipes for building, testing, running a dev server, the CLI, and the Docker image.
 - **Deployed** on Railway (see **Deployment**).
 - **Rate limiting:** per admin token, `429` with `Retry-After`. Evaluation tokens are left to a proxy, like the big flag services do (see **Rate limiting**).
+- **Web UI** at `/ui/`: everything the admin API does, in a browser (see **Web UI**).
 - **Tracking** (off by default): seen contexts and exposures in a separate SQLite file, per-environment settings with an attribute allowlist, retention sweep, deletion by hand, admin API and CLI (see **Tracking**).
 
 ### Left for v1
@@ -508,7 +525,7 @@ CI (`.github/workflows/ci.yml`) runs `swift test` on every push to `main` and on
 |---|---|
 | **v1.1** | SSE, as OFREP defines it (ADR-0008): the bulk response gets an `eventStreams` entry pointing at our SSE endpoint, which sends `{"type": "refetchEvaluation", "etag": …}` when config changes. Clients re-fetch the bulk endpoint. No custom extension needed. |
 | **v1.5** | A shortcut to add a seen ID to a flag's individual targeting (today: edit the config's `targetingKey in [...]` rule with `config set`). |
-| **later** | App attestation (Apple's App Attest) for evaluation requests, UI, scheduled flag changes, flag dependencies, admin roles, Postgres store, experiment analysis |
+| **later** | App attestation (Apple's App Attest) for evaluation requests, scheduled flag changes, flag dependencies, admin roles, Postgres store, experiment analysis |
 
 ## Open questions
 

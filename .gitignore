@@ -7,3 +7,7 @@ xcuserdata/
 *.sqlite-shm
 *.sqlite-wal
 .amp/portals/*
+
+# Browser UI
+ui/node_modules/
+ui/dist/

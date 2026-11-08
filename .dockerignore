@@ -8,3 +8,5 @@ xcuserdata/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+ui/node_modules/
+ui/dist/

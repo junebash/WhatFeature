@@ -39,6 +39,10 @@ step "just"
 command -v just >/dev/null || curl -fsSL https://just.systems/install.sh | sudo bash -s -- --to /usr/local/bin
 done_step
 
+step "UI dependencies"
+(cd ui && npm ci)
+done_step
+
 step "Build package and tests"
 swift build --build-tests
 done_step

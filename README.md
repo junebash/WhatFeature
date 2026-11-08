@@ -4,7 +4,7 @@
 
 A small feature flag service written in Swift. Flags are evaluated on the server and served over the [OpenFeature Remote Evaluation Protocol (OFREP)](https://github.com/open-feature/protocol), so any OpenFeature SDK with an OFREP provider can use it. Swift apps can use the small `WhatFeatureFlags` library instead (see "Use flags in an app" below).
 
-Status: early, but usable end to end: OFREP evaluation, an admin API and CLI, SQLite storage, tokens, an audit log, and optional tracking of who was served what. No UI. Deploys to Railway (see below). CI tests every push on Linux and macOS, and builds and starts the Docker image. The full list is under "Status and roadmap" in [`docs/DESIGN.md`](docs/DESIGN.md), along with the design and the full admin API.
+Status: early, but usable end to end: OFREP evaluation, an admin API and CLI, SQLite storage, tokens, an audit log, optional tracking of who was served what, and a browser UI for all of it. Deploys to Railway (see below). CI tests every push on Linux and macOS, and builds and starts the Docker image. The full list is under "Status and roadmap" in [`docs/DESIGN.md`](docs/DESIGN.md), along with the design and the full admin API.
 
 ## Try it
 
@@ -25,6 +25,16 @@ just login
 ```
 
 `just token` prints an admin token for `dev.sqlite`; `just serve` runs the server on it with the example flags; `just login` (in another terminal) asks for the token and saves it, so `just cli flags list` and the rest work. `just app-flags` shows what an app gets. `just reset` starts over.
+
+### Browser UI
+
+Needs Node 22 or later. Build it once, then `just serve` serves it:
+
+```bash
+just ui-install && just ui-build
+```
+
+Open <http://localhost:8080/ui/> and sign in with the token from `just token`. It covers everything the CLI does: flags and their rules in every environment, trying a context, tracking, tokens and the audit log. The Docker image includes it. To work on the UI with hot reload, run `just ui-dev` alongside `just serve` and open <http://localhost:5173/ui/>. It sends API calls to the local server, or to `WHATFEATURE_URL` if that's set (the variable the CLI reads).
 
 Or by hand:
 
@@ -222,6 +232,7 @@ Server:
 | `--port` | `PORT` | `8080` |
 | `--seed` | `SEED_FILE` | none |
 | `--admin-rate-limit` | `RATE_LIMIT_ADMIN` | `600` requests a minute per token (`off` to turn off) |
+| `--ui-directory` | `UI_DIRECTORY` | none: no UI. The built UI (`ui/dist`), served at `/ui/`. The Docker image sets it. |
 | `--tracking-database` | `TRACKING_DATABASE_PATH` | next to `--database`, with `-tracking` added (`whatfeature-tracking.sqlite`). Only written for environments with tracking on; see "Tracking" in [`docs/DESIGN.md`](docs/DESIGN.md). |
 
 CLI (flag, else env, else what `login` saved):
@@ -239,3 +250,9 @@ swift test
 ```
 
 The live tests run a real server on a real port and read it with the admin client, the `whatfeature` binary, and `FlagClient`.
+
+The browser UI has its own type check and tests:
+
+```bash
+just ui-test
+```

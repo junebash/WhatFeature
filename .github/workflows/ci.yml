@@ -34,6 +34,25 @@ jobs:
       - run: swift --version
       - run: swift test
 
+  # The browser UI: type-checks, tests and builds.
+  ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
   # The Docker image: builds, starts, and answers. Same steps as `just docker-build`, `docker-run` and
   # `docker-token`.
   docker:
@@ -64,6 +83,8 @@ jobs:
             -d '{"context": {"targetingKey": "june", "country": "US"}}' | tee response.json
           echo
           grep -q '"key":"new-onboarding"' response.json
+      - name: Browser UI
+        run: curl -fsS http://localhost:8080/ui/ | grep -q '<div id="app">'
       - name: Container logs
         if: always()
         run: docker logs whatfeature || true

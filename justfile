@@ -1,6 +1,7 @@
 # WhatFeature tasks. Run `just` to see them all.
 #
-# Needs Swift 6.2 or newer (Xcode 26 on a Mac). The docker-* recipes need Docker (Docker Desktop or OrbStack).
+# Needs Swift 6.2 or newer (Xcode 26 on a Mac). The ui-* recipes need Node 22 or newer. The docker-* recipes need Docker
+# (Docker Desktop or OrbStack).
 # The railway-* recipes need the Railway CLI, logged in and linked (`railway login`, `railway link`).
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
@@ -50,9 +51,9 @@ cli-binary:
 token name="dev": cli-binary
     @{{bin}} db token create --admin --name "{{name}}" --database {{dev_db}}
 
-# Run the server on dev.sqlite, with the example project and flags loaded. Stop it with Ctrl-C.
+# Run the server on dev.sqlite with the example flags, and the UI at /ui once built (`just ui-build`). Ctrl-C stops it.
 serve: cli-binary
-    @{{bin}} serve --database {{dev_db}} --seed examples/seed.json --port {{port}}
+    @{{bin}} serve --database {{dev_db}} --seed examples/seed.json --port {{port}} --ui-directory ui/dist
 
 # Point the CLI at the local server (Docker or not) and save your admin token. It asks for the token.
 login: cli-binary
@@ -79,6 +80,24 @@ health:
 # Delete the dev database. The next `just serve` starts fresh; make a new token with `just token` first.
 reset:
     rm -f {{dev_db}} {{dev_db}}-shm {{dev_db}}-wal
+
+# --- Browser UI (ui/, Vue + Vite) ---
+
+# Install the UI's dependencies
+ui-install:
+    cd ui && npm ci
+
+# Build the UI into ui/dist, which `just serve` serves at /ui
+ui-build:
+    cd ui && npm run build
+
+# Work on the UI with hot reload at http://localhost:5173/ui/, talking to `just serve` (run that too)
+ui-dev:
+    cd ui && npm run dev
+
+# Type-check the UI and run its tests
+ui-test:
+    cd ui && npm run typecheck && npm test
 
 # --- Docker ---
 
