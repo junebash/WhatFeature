@@ -12,7 +12,7 @@ It is also a learning project: the point is to understand how a flag service wor
 
 - A UI. Everything is REST.
 - Client-side evaluation. Rules never leave the server.
-- Experiment analysis (did variant B win?).
+- Experiment analysis (did variant B win?). Tracking records who was served what; the statistics happen elsewhere.
 - Multiple instances / high availability.
 
 ## Decisions at a glance
@@ -31,7 +31,7 @@ It is also a learning project: the point is to understand how a flag service wor
 | Auth | Revocable, scoped bearer tokens for both admin and evaluation |
 | Audit log | Yes, from v1 |
 | Change updates | v1: ETag on bulk evaluation. v1.1: SSE `refetchEvaluation` events, as OFREP defines them |
-| Evaluation contexts | Never stored, never logged |
+| Evaluation contexts | Never logged. Not stored unless tracking is turned on for an environment; then only the targeting key and allowlisted attributes, kept 30 days by default (see **Tracking**) |
 | Deployment | Single container, config from env vars. Host not chosen yet. |
 | License | MIT |
 
@@ -371,15 +371,53 @@ Parsing rules worth knowing:
 
 Written in the same transaction as the change. Never edited or deleted through the API. Audit entries have no foreign keys, so they outlive whatever they describe. Token entries never include the secret or its hash.
 
+## Tracking
+
+Not built yet (see **Status and roadmap**). **Optional, per environment: the server records who it saw and what it served them**, so I can list the IDs being served, look up one ID's flags and override them with individual targeting, and get assignment data for A/B tests. Modeled on LaunchDarkly's Contexts list and exposure events, with the recording done on the server so apps don't change: `FlagClient` and other OFREP clients work exactly as before.
+
+**Settings live on the environment**, changed through `PATCH …/environments/{env}` (so they're audited like any other admin write):
+
+- `enabled` — off by default. Upgrading a server never starts storing personal data on its own.
+- `attributes` — an **allowlist** of context attributes to store, e.g. `["appVersion", "platform"]`. Empty by default. An attribute an app starts sending later, like `email`, isn't stored until someone adds it. Removing an attribute from the list deletes its stored values.
+- `retentionDays` — 30 by default.
+
+**Two tables:**
+
+- **Seen contexts:** one row per environment and `targetingKey`, with `firstSeen`, `lastSeen`, and the latest values of the allowlisted attributes. Updated on every OFREP request that has a targeting key, including requests answered with `304`.
+- **Exposures:** one row per environment, `targetingKey`, flag and variant served, with `firstServed`, `lastServed`, and the `reason`, matched rule and config version from the last time it was served. Written for every resolved result in an evaluation (bulk or single), not only experiments. Disabled flags, errors and `304`s add nothing, because nothing new was served. A user who moves from `control` to `test` gets a second row, so re-weighted experiments are visible.
+
+Attributes sit on the seen row, not on each exposure, as in LaunchDarkly (where `index` events carry attributes and `feature` events carry only the key). So segmenting an old exposure uses the ID's *latest* attributes. If that matters for something like `appVersion`, copying named attributes onto exposures can come later.
+
+**What "exposure" means here:** the server served that variant to that ID, not that the user saw the feature. The bulk endpoint returns every flag, so A/B data includes users who never opened the feature; that dilutes a difference but doesn't bias it, since assignment is random. Outcomes (retention, purchases) aren't the flag server's to know: they come from the app's backend or analytics, joined on `targetingKey`. Experiment analysis stays a non-goal.
+
+**Retention:** an ID whose `lastSeen` is older than `retentionDays` is deleted, with all its exposures. Seeing the ID again restarts the clock. A sweep runs periodically.
+
+**Deleting by hand:** one admin call deletes everything stored for an ID in an environment (its seen row and every exposure). Its audit entry records that a deletion happened, but **not the ID**, because audit entries are never deleted. Turning tracking off stops recording; what's stored expires on schedule, or can be deleted by hand.
+
+**Kept off the hot path:**
+
+- **A separate SQLite file** (`TRACKING_DATABASE_PATH`, next to the main database by default). SQLite allows one writer per file, so tracking writes never wait on admin writes or the other way round, and the file can be thrown away without touching flags.
+- **Buffered in memory, written in batches** every few seconds, with repeats for the same ID merged. Evaluation never waits on tracking and never fails because of it. A crash loses at most the last few seconds; a full buffer drops records and logs how many.
+- Dry-run evaluations through the admin API record nothing.
+
+*Considered:* exposure events sent by the app at the moment it reads a flag, as LaunchDarkly's SDKs do. That measures real exposure, but it changes every client, and other OFREP clients wouldn't send them. It can be added to `FlagClient` later without changing its API. Also considered: a separate tracking service. A second file in the same process gets the same isolation without another deployment.
+
 ## Privacy
 
 Evaluation contexts can contain personal information (user IDs, emails). The server:
 
-- uses the context to evaluate, then discards it
-- never writes contexts to the database
+- uses the context to evaluate, then discards it, unless tracking is on (see **Tracking**)
 - never logs context values. Request logs record the method and path only (for single-flag evaluation, the path includes the flag key).
 
-The exception is individual targeting (see Operators). There, an ID I chose to put into a rule is stored in the flag config.
+What gets stored is the operator's decision, because the operator owns the data and the privacy policy. Defaults are the cautious choice:
+
+- **Tracking is off** until turned on for an environment.
+- **With tracking on, only the targeting key and allowlisted attributes are stored**, plus what was served. Nothing else from the context is kept.
+- **Stored data expires** after 30 days without a request (configurable), and **can be deleted by hand** for any ID.
+
+Under GDPR and similar laws, a random user or device ID still counts as personal data. An operator who turns tracking on should say so in their privacy policy (and, for iOS apps, Apple's privacy labels).
+
+The other exception is individual targeting (see Operators). There, an ID I chose to put into a rule is stored in the flag config.
 
 ## Rate limiting
 
@@ -451,13 +489,13 @@ CI (`.github/workflows/ci.yml`) runs `swift test` on every push to `main` and on
 
 | Version | Scope |
 |---|---|
-| **v1.1** | SSE, as OFREP defines it (ADR-0008): the bulk response gets an `eventStreams` entry pointing at our SSE endpoint, which sends `{"type": "refetchEvaluation", "etag": …}` when config changes. Clients re-fetch the bulk endpoint. No custom extension needed. Also experiment exposure tracking, lined up with OpenFeature's tracking API. |
-| **v1.5** | Support tooling: look up "what has this user been getting" and opt them into betas easily. Needs a careful decision about what gets stored (see **Privacy**). |
+| **v1.1** | SSE, as OFREP defines it (ADR-0008): the bulk response gets an `eventStreams` entry pointing at our SSE endpoint, which sends `{"type": "refetchEvaluation", "etag": …}` when config changes. Clients re-fetch the bulk endpoint. No custom extension needed. |
+| **v1.5** | Tracking (see **Tracking**): seen contexts and exposures, per-environment settings, retention sweep, deletion by hand. Admin API and CLI to list seen IDs, show one ID's attributes and exposures, export exposures for analysis, and add an ID to a flag's individual targeting. |
 | **later** | App attestation (Apple's App Attest) for evaluation requests, UI, scheduled flag changes, flag dependencies, admin roles, Postgres store, experiment analysis |
 
 ## Open questions
 
-Nothing open right now.
+- **Tracking's query API and CLI:** paths, filters (since, flag, variant, attribute), and the export format. Decide when building v1.5.
 
 ## Clients
 
