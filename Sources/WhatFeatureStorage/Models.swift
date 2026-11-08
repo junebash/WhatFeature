@@ -59,8 +59,37 @@ public struct Environment: Sendable, Hashable, Codable {
     public var createdAt: Date
     /// Like a project's: out of lists, evaluation tokens stop working, never deleted.
     public var archivedAt: Date?
+    public var tracking = TrackingSettings()
 
     public var isArchived: Bool { archivedAt != nil }
+}
+
+/// What the server records about the contexts it evaluates in one environment (see `TrackingStore`).
+/// The defaults store nothing.
+public struct TrackingSettings: Sendable, Hashable, Codable {
+    public var enabled: Bool
+    /// Context attributes to store besides the targeting key. Nothing else from a context is kept.
+    public var attributes: [String]
+    /// Contexts not seen for this many days are deleted, with their exposures.
+    public var retentionDays: Int
+
+    public init(enabled: Bool = false, attributes: [String] = [], retentionDays: Int = 30) {
+        self.enabled = enabled
+        self.attributes = attributes
+        self.retentionDays = retentionDays
+    }
+
+    /// Sorted, without duplicates, so equal settings compare equal and audit entries show real changes.
+    func validated() throws -> TrackingSettings {
+        var issues: [String] = []
+        if retentionDays < 1 { issues.append("retentionDays must be at least 1") }
+        if attributes.contains("") { issues.append("Attribute names can't be empty") }
+        if attributes.contains("targetingKey") { issues.append("The targeting key is always stored; don't list it in attributes") }
+        if !issues.isEmpty { throw StoreError.invalid(issues) }
+        var result = self
+        result.attributes = Array(Set(attributes)).sorted()
+        return result
+    }
 }
 
 public struct Token: Sendable, Hashable, Codable {

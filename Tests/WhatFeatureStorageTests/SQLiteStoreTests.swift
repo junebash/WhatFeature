@@ -91,6 +91,49 @@ private func makeStore() async throws -> (SQLiteStore, Project, dev: Environment
     }
 }
 
+@Suite struct TrackingSettingsTests {
+    @Test func offByDefaultAndChangedOnlyInOneEnvironment() async throws {
+        let (store, project, dev, prod) = try await makeStore()
+        #expect(dev.tracking == TrackingSettings(enabled: false, attributes: [], retentionDays: 30))
+
+        let updated = try await store.setTracking(
+            TrackingSettings(enabled: true, attributes: ["platform", "appVersion", "platform"]), environment: dev.id, by: me
+        )
+        let expected = TrackingSettings(enabled: true, attributes: ["appVersion", "platform"], retentionDays: 30)
+        #expect(updated.tracking == expected)
+        #expect(try await store.environment(key: "dev", in: project.id)?.tracking == expected)
+        #expect(try await store.environment(key: "prod", in: project.id)?.tracking == prod.tracking)
+    }
+
+    @Test func changesAreAuditedButLeaveTheVersionAlone() async throws {
+        let (store, project, dev, _) = try await makeStore()
+        let settings = TrackingSettings(enabled: true, attributes: ["appVersion"])
+        let version = try await store.snapshot(for: dev.id).version
+        try await store.setTracking(settings, environment: dev.id, by: me)
+
+        #expect(try await store.environment(key: "dev", in: project.id)?.version == version, "Apps get the same flags, so ETags stay valid")
+        let entry = try #require(try await store.auditEntries().first)
+        #expect(entry.action == "environment.update")
+        #expect(entry.environmentID == dev.id)
+        #expect(entry.after?.contains(#""attributes":["appVersion"]"#) == true)
+
+        let count = try await store.auditEntries().count
+        try await store.setTracking(settings, environment: dev.id, by: me)
+        #expect(try await store.auditEntries().count == count, "Doing nothing isn't recorded")
+    }
+
+    @Test func rejectsBadSettings() async throws {
+        let (store, _, dev, _) = try await makeStore()
+        await #expect(throws: StoreError.invalid([
+            "retentionDays must be at least 1",
+            "Attribute names can't be empty",
+            "The targeting key is always stored; don't list it in attributes",
+        ])) {
+            try await store.setTracking(TrackingSettings(attributes: ["", "targetingKey"], retentionDays: 0), environment: dev.id, by: me)
+        }
+    }
+}
+
 @Suite struct FlagTests {
     @Test func newFlagIsDisabledInEveryEnvironment() async throws {
         let (store, _, dev, prod) = try await makeStore()
@@ -275,11 +318,15 @@ private func makeStore() async throws -> (SQLiteStore, Project, dev: Environment
             try await store.createFlag(key: "beta", type: .boolean, variants: ["on": true, "off": false], in: project.id, by: me)
             try await store.setConfig(FlagConfig(enabled: true, defaultResult: .variant("on")), flagKey: "beta", in: dev.id, by: me)
             secret = try await store.createEvaluationToken(name: "iOS", for: dev.id, by: me).secret
+            try await store.setTracking(TrackingSettings(enabled: true, attributes: ["appVersion"], retentionDays: 7), environment: dev.id, by: me)
             environmentID = dev.id
         }
 
         let reopened = try SQLiteStore(path: path)
         #expect(try await reopened.environment(forTokenHash: TokenHash.of(secret)) == environmentID)
+        let project = try #require(try await reopened.project(key: "demo"))
+        #expect(try await reopened.environment(key: "dev", in: project.id)?.tracking
+            == TrackingSettings(enabled: true, attributes: ["appVersion"], retentionDays: 7))
         let result = try await reopened.snapshot(for: environmentID).evaluate(flagKey: "beta", context: EvaluationContext())
         #expect(result.outcome == .resolved(value: true, variant: "on", reason: .static, matchedRule: nil))
     }

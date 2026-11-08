@@ -208,6 +208,27 @@ public final class SQLiteStore: EvaluationStore {
         }
     }
 
+    /// Tracking doesn't change what apps get, so the environment's version (and so its ETags) stays the same.
+    /// Doing nothing isn't recorded.
+    @discardableResult
+    public func setTracking(_ settings: TrackingSettings, environment environmentID: EnvironmentID, by actor: AuditActor) async throws -> Environment {
+        let settings = try settings.validated()
+        return try await database.write { db in
+            guard var record = try EnvironmentRecord.fetchOne(db, key: environmentID.rawValue) else {
+                throw StoreError.notFound("No environment with ID '\(environmentID)'")
+            }
+            guard record.tracking != settings else { return record.model }
+            let before = record.model
+            record.tracking = settings
+            try record.update(db)
+            try self.audit(
+                db, actor, "environment.update",
+                project: before.projectID, environment: environmentID, before: before, after: record.model
+            )
+            return record.model
+        }
+    }
+
     public func environment(key: String, in projectID: ProjectID) async throws -> Environment? {
         try await database.read { db in
             try EnvironmentRecord.filter(Column("projectID") == projectID.rawValue && Column("key") == key).fetchOne(db)?.model

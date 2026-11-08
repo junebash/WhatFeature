@@ -81,6 +81,14 @@ enum Schema {
             try db.alter(table: "environment") { t in t.add(column: "archivedAt", .datetime) }
         }
 
+        // `TrackingSettings` as JSON. The default is tracking off.
+        migrator.registerMigration("v3-environment-tracking-settings") { db in
+            try db.alter(table: "environment") { t in
+                t.add(column: "tracking", .jsonText).notNull()
+                    .defaults(sql: #"'{"attributes":[],"enabled":false,"retentionDays":30}'"#)
+            }
+        }
+
         return migrator
     }
 }

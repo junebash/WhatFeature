@@ -35,6 +35,7 @@ struct EnvironmentRecord: Codable, FetchableRecord, PersistableRecord {
     var version: Int
     var createdAt: Date
     var archivedAt: Date?
+    var tracking: TrackingSettings
 
     init(_ environment: Environment) {
         id = environment.id.rawValue
@@ -44,12 +45,13 @@ struct EnvironmentRecord: Codable, FetchableRecord, PersistableRecord {
         version = environment.version
         createdAt = environment.createdAt
         archivedAt = environment.archivedAt
+        tracking = environment.tracking
     }
 
     var model: Environment {
         Environment(
             id: EnvironmentID(id), projectID: ProjectID(projectID), key: key, name: name, version: version, createdAt: createdAt,
-            archivedAt: archivedAt
+            archivedAt: archivedAt, tracking: tracking
         )
     }
 }

@@ -373,7 +373,7 @@ Written in the same transaction as the change. Never edited or deleted through t
 
 ## Tracking
 
-Not built yet (see **Status and roadmap**). **Optional, per environment: the server records who it saw and what it served them**, so I can list the IDs being served, look up one ID's flags and override them with individual targeting, and get assignment data for A/B tests. Modeled on LaunchDarkly's Contexts list and exposure events, with the recording done on the server so apps don't change: `FlagClient` and other OFREP clients work exactly as before.
+Partly built: the storage (`TrackingSettings` on `Environment`, `SQLiteStore.setTracking`, and `TrackingStore` for the tracking file). Not yet: recording from OFREP requests, the buffer, the sweep, and the admin API and CLI (see **Status and roadmap**). **Optional, per environment: the server records who it saw and what it served them**, so I can list the IDs being served, look up one ID's flags and override them with individual targeting, and get assignment data for A/B tests. Modeled on LaunchDarkly's Contexts list and exposure events, with the recording done on the server so apps don't change: `FlagClient` and other OFREP clients work exactly as before.
 
 **Settings live on the environment**, changed through `PATCH …/environments/{env}` (so they're audited like any other admin write):
 
