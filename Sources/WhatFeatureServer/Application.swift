@@ -8,7 +8,8 @@ public func buildApplication(
     store: SQLiteStore,
     configuration: ApplicationConfiguration = .init(),
     adminRateLimit: RateLimit? = .adminDefault,
-    tracking: TrackingRecorder? = nil
+    tracking: TrackingRecorder? = nil,
+    uiDirectory: String? = nil
 ) -> some ApplicationProtocol {
     let router = Router(context: WhatFeatureRequestContext.self)
     // Method and path only: evaluation contexts are in the body, and targeting keys in admin queries.
@@ -28,6 +29,12 @@ public func buildApplication(
         .add(middleware: AdminErrorMiddleware())
         .add(middleware: AdminTokenMiddleware(store: store, rateLimiter: adminRateLimit.map { RateLimiter(limit: $0) }))
     AdminRoutes(store: store, tracking: tracking).register(on: admin)
+
+    // The browser UI. Added after every route, so it only sees requests no route matched.
+    if let uiDirectory {
+        router.get("/") { _, _ in Response.redirect(to: WebUIMiddleware.path + "/") }
+        router.add(middleware: WebUIMiddleware(directory: uiDirectory))
+    }
 
     return Application(router: router, configuration: configuration, services: tracking.map { [$0] } ?? [])
 }

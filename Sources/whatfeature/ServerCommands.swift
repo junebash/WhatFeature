@@ -60,6 +60,9 @@ struct Serve: AsyncParsableCommand {
     )
     var trackingDatabase: String?
 
+    @Option(help: "Folder with the built browser UI (`just ui-build` makes ui/dist), served at /ui. Env: UI_DIRECTORY. (default: no UI)")
+    var uiDirectory: String?
+
     func run() async throws {
         let context = CLIContext.current
         let host = host ?? context.environment["HOST"] ?? "127.0.0.1"
@@ -82,7 +85,8 @@ struct Serve: AsyncParsableCommand {
             store: store,
             configuration: .init(address: .hostname(host, port: port), serverName: "WhatFeature"),
             adminRateLimit: rateLimit,
-            tracking: TrackingRecorder(store: store, trackingStore: trackingStore)
+            tracking: TrackingRecorder(store: store, trackingStore: trackingStore),
+            uiDirectory: uiDirectory ?? context.environment["UI_DIRECTORY"]
         )
         do {
             try await app.runService()
